@@ -1,0 +1,60 @@
+name: Download POSTAL 2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install SteamCMD
+        run: |
+          sudo add-apt-repository multiverse -y
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y steamcmd zip
+
+      - name: Prepare folder
+        run: |
+          mkdir -p "$HOME/postal2"
+
+      - name: Download POSTAL 2
+        env:
+          STEAM_USER: ${{ secrets.STEAM_USER }}
+          STEAM_PASS: ${{ secrets.STEAM_PASS }}
+          STEAM_GUARD: ${{ secrets.STEAM_GUARD }}
+        run: |
+          if [ -n "$STEAM_GUARD" ]; then
+            steamcmd \
+              "+set_steam_guard_code $STEAM_GUARD" \
+              +quit || true
+          fi
+
+          steamcmd \
+            +@sSteamCmdForcePlatformType windows \
+            +force_install_dir "$HOME/postal2" \
+            +login "$STEAM_USER" "$STEAM_PASS" \
+            +app_update 223470 validate \
+            +quit
+
+      - name: Show downloaded files
+        run: |
+          echo "===== SIZE ====="
+          du -sh "$HOME/postal2" || true
+
+          echo "===== FILES ====="
+          find "$HOME/postal2" -maxdepth 3 -type f | head -200
+
+      - name: Pack POSTAL 2
+        run: |
+          cd "$HOME"
+          zip -r -1 postal2-windows.zip postal2
+
+      - name: Upload POSTAL 2
+        uses: actions/upload-artifact@v4
+        with:
+          name: POSTAL2-Windows
+          path: ~/postal2-windows.zip
+          compression-level: 0
+          retention-days: 1
