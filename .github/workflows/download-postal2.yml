@@ -12,8 +12,20 @@ jobs:
         run: |
           sudo add-apt-repository multiverse -y
           sudo dpkg --add-architecture i386
+
+          echo steam steam/question select "I AGREE" | sudo debconf-set-selections
+          echo steam steam/license note '' | sudo debconf-set-selections
+
           sudo apt-get update
-          sudo apt-get install -y steamcmd zip
+
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            steamcmd \
+            zip \
+            ca-certificates
+
+          sudo ln -sf /usr/games/steamcmd /usr/local/bin/steamcmd
+
+          steamcmd +quit
 
       - name: Prepare folder
         run: |
@@ -26,25 +38,35 @@ jobs:
           STEAM_GUARD: ${{ secrets.STEAM_GUARD }}
         run: |
           if [ -n "$STEAM_GUARD" ]; then
+
             steamcmd \
-              "+set_steam_guard_code $STEAM_GUARD" \
-              +quit || true
+              +@sSteamCmdForcePlatformType windows \
+              +force_install_dir "$HOME/postal2" \
+              +login "$STEAM_USER" "$STEAM_PASS" "$STEAM_GUARD" \
+              +app_update 223470 validate \
+              +quit
+
+          else
+
+            steamcmd \
+              +@sSteamCmdForcePlatformType windows \
+              +force_install_dir "$HOME/postal2" \
+              +login "$STEAM_USER" "$STEAM_PASS" \
+              +app_update 223470 validate \
+              +quit
+
           fi
 
-          steamcmd \
-            +@sSteamCmdForcePlatformType windows \
-            +force_install_dir "$HOME/postal2" \
-            +login "$STEAM_USER" "$STEAM_PASS" \
-            +app_update 223470 validate \
-            +quit
-
-      - name: Show downloaded files
+      - name: Check POSTAL 2
         run: |
-          echo "===== SIZE ====="
-          du -sh "$HOME/postal2" || true
+          echo "===== POSTAL 2 SIZE ====="
+          du -sh "$HOME/postal2"
 
-          echo "===== FILES ====="
+          echo "===== POSTAL 2 FILES ====="
           find "$HOME/postal2" -maxdepth 3 -type f | head -200
+
+          echo "===== EXE FILES ====="
+          find "$HOME/postal2" -iname "*.exe" -type f
 
       - name: Pack POSTAL 2
         run: |
