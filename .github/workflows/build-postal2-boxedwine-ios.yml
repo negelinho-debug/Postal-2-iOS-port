@@ -430,10 +430,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>0.1</string>
+              <string>0.2</string>
 
               <key>CFBundleVersion</key>
-              <string>1</string>
+              <string>2</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -451,24 +451,16 @@ jobs:
 
               <array>
 
-                  <string>
-                  UIInterfaceOrientationLandscapeLeft
-                  </string>
+                  <string>UIInterfaceOrientationLandscapeLeft</string>
 
-                  <string>
-                  UIInterfaceOrientationLandscapeRight
-                  </string>
+                  <string>UIInterfaceOrientationLandscapeRight</string>
 
               </array>
 
-              <key>
-              UIApplicationSupportsIndirectInputEvents
-              </key>
-
+              <key>UIApplicationSupportsIndirectInputEvents</key>
               <true/>
 
               <key>UILaunchScreen</key>
-
               <dict/>
 
           </dict>
@@ -478,6 +470,7 @@ jobs:
 
       # ==========================================================
       # XCODE PROJECT
+      # C++20 FIX IS HERE
       # ==========================================================
 
       - name: Create Xcode project
@@ -503,7 +496,7 @@ jobs:
                 "15.0"
 
               CLANG_CXX_LANGUAGE_STANDARD:
-                gnu++17
+                gnu++20
 
               CLANG_CXX_LIBRARY:
                 libc++
@@ -611,6 +604,8 @@ jobs:
 
                     - "$(inherited)"
 
+                    - "-std=gnu++20"
+
                     - "-Wno-error"
 
                     - "-Wno-deprecated-declarations"
@@ -671,16 +666,20 @@ jobs:
 
           xcodegen generate
 
-          test -d \
-            Postal2BoxedWine.xcodeproj
+          test -d Postal2BoxedWine.xcodeproj
+
+          echo "===== C++ STANDARD ====="
+
+          xcodebuild \
+            -project Postal2BoxedWine.xcodeproj \
+            -scheme Postal2BoxedWine \
+            -showBuildSettings \
+            | grep \
+            CLANG_CXX_LANGUAGE_STANDARD \
+            || true
 
       # ==========================================================
       # BUILD
-      #
-      # IMPORTANT:
-      # -quiet hides thousands of successful CompileC lines.
-      #
-      # If Xcode fails, this step should show the actual errors.
       # ==========================================================
 
       - name: Build iPhone BoxedWine
@@ -689,8 +688,7 @@ jobs:
           set +e
           set -o pipefail
 
-          rm -f \
-            boxedwine-ios-build.log
+          rm -f boxedwine-ios-build.log
 
           xcodebuild \
             -quiet \
@@ -705,6 +703,7 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
+            CLANG_CXX_LANGUAGE_STANDARD=gnu++20 \
             build \
             2>&1 | tee boxedwine-ios-build.log
 
@@ -728,9 +727,9 @@ jobs:
           if [ "$STATUS" != "0" ]; then
 
             echo
-            echo "===== LAST 120 LINES ====="
+            echo "===== LAST 150 LINES ====="
 
-            tail -120 \
+            tail -150 \
               boxedwine-ios-build.log \
               || true
 
@@ -772,7 +771,7 @@ jobs:
           du -sh "$APP"
 
       # ==========================================================
-      # IPA
+      # CREATE IPA
       # ==========================================================
 
       - name: Create IPA
@@ -794,19 +793,16 @@ jobs:
             POSTAL2-BoxedWine-iOS.ipa \
             Payload
 
-          test -f \
-            POSTAL2-BoxedWine-iOS.ipa
+          test -f POSTAL2-BoxedWine-iOS.ipa
 
           echo "===== IPA ====="
 
-          ls -lh \
-            POSTAL2-BoxedWine-iOS.ipa
+          ls -lh POSTAL2-BoxedWine-iOS.ipa
 
       # ==========================================================
       # RELEASE
       #
-      # We do NOT use actions/upload-artifact.
-      # Your artifact quota was full.
+      # No Actions Artifact storage needed.
       # ==========================================================
 
       - name: Publish IPA to Releases
