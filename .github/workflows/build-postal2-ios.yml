@@ -1,0 +1,381 @@
+name: POSTAL 2 iOS Port
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  # ============================================================
+  # 1. НАСТОЯЩИЙ POSTAL 2 ДЛЯ LINUX ИЗ ТВОЕГО STEAM
+  # ============================================================
+
+  postal2-game:
+    name: Prepare POSTAL 2 Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+
+      - name: Install SteamCMD
+        run: |
+          sudo add-apt-repository multiverse -y
+          sudo dpkg --add-architecture i386
+
+          echo steam steam/question select "I AGREE" \
+            | sudo debconf-set-selections
+
+          echo steam steam/license note '' \
+            | sudo debconf-set-selections
+
+          sudo apt-get update
+
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            steamcmd \
+            file \
+            zip \
+            ca-certificates
+
+          sudo ln -sf /usr/games/steamcmd /usr/local/bin/steamcmd
+
+          steamcmd +quit
+
+      - name: Prepare game folder
+        run: |
+          rm -rf "$HOME/postal2-linux"
+          mkdir -p "$HOME/postal2-linux"
+
+      - name: Download POSTAL 2 Linux
+        env:
+          STEAM_USER: ${{ secrets.STEAM_USER }}
+          STEAM_PASS: ${{ secrets.STEAM_PASS }}
+          STEAM_GUARD: ${{ secrets.STEAM_GUARD }}
+        run: |
+          set -e
+
+          if [ -n "$STEAM_GUARD" ]; then
+
+            steamcmd \
+              +@sSteamCmdForcePlatformType linux \
+              +force_install_dir "$HOME/postal2-linux" \
+              +login "$STEAM_USER" "$STEAM_PASS" "$STEAM_GUARD" \
+              +app_update 223470 validate \
+              +quit
+
+          else
+
+            steamcmd \
+              +@sSteamCmdForcePlatformType linux \
+              +force_install_dir "$HOME/postal2-linux" \
+              +login "$STEAM_USER" "$STEAM_PASS" \
+              +app_update 223470 validate \
+              +quit
+
+          fi
+
+      - name: Check Paradise Lost
+        run: |
+          echo "====================================="
+          echo "SEARCHING FOR PARADISE LOST"
+          echo "====================================="
+
+          find "$HOME/postal2-linux" \
+            -maxdepth 4 \
+            -iname "*paradise*" \
+            -print || true
+
+          if find "$HOME/postal2-linux" \
+              -maxdepth 3 \
+              -type d \
+              -iname "*Paradise Lost*" \
+              | grep -q . ; then
+
+            echo "Paradise Lost found"
+
+          else
+
+            echo "WARNING: Paradise Lost folder not detected."
+            echo "Trying DLC update..."
+
+            steamcmd \
+              +@sSteamCmdForcePlatformType linux \
+              +force_install_dir "$HOME/postal2-linux" \
+              +login "${{ secrets.STEAM_USER }}" "${{ secrets.STEAM_PASS }}" "${{ secrets.STEAM_GUARD }}" \
+              +app_update 360960 validate \
+              +quit || true
+          fi
+
+      # Share The Pain убираем только из iOS-копии.
+      # Оригинальная Steam-копия не меняется.
+      - name: Remove Share The Pain
+        run: |
+          echo "Removing Share The Pain from iOS package..."
+
+          find "$HOME/postal2-linux" \
+            -maxdepth 2 \
+            -type d \
+            \( \
+              -iname "ShareThePain" \
+              -o \
+              -iname "Share The Pain" \
+            \) \
+            -print \
+            -exec rm -rf {} + || true
+
+      - name: Remove useless PC extras
+        run: |
+          find "$HOME/postal2-linux" \
+            -type f \
+            \( \
+              -iname "*.pdb" \
+              -o \
+              -iname "*.bat" \
+              -o \
+              -iname "*.cmd" \
+              -o \
+              -iname "*.msi" \
+              -o \
+              -iname "installscript.vdf" \
+            \) \
+            -delete || true
+
+      - name: Find real Linux executables
+        run: |
+          echo "====================================="
+          echo "ELF EXECUTABLES"
+          echo "====================================="
+
+          FOUND=0
+
+          while IFS= read -r file; do
+
+            TYPE="$(file "$file" || true)"
+
+            if echo "$TYPE" | grep -q "ELF"; then
+              echo "$TYPE"
+              FOUND=1
+              chmod +x "$file" || true
+            fi
+
+          done < <(
+            find "$HOME/postal2-linux" \
+              -type f \
+              -size +50k
+          )
+
+          if [ "$FOUND" = "0" ]; then
+            echo "ERROR: Linux ELF executable not found"
+            exit 1
+          fi
+
+      - name: Show final game size
+        run: |
+          echo "====================================="
+          echo "FINAL POSTAL 2 SIZE"
+          echo "====================================="
+
+          du -sh "$HOME/postal2-linux"
+
+          echo
+          echo "Top folders:"
+          du -sh "$HOME/postal2-linux"/* \
+            2>/dev/null \
+            | sort -h || true
+
+      # ВАЖНО:
+      # загружаем ПАПКУ, а не ZIP внутри ZIP.
+      # GitHub сам сделает только один artifact ZIP.
+      - name: Upload POSTAL 2 Linux game
+        uses: actions/upload-artifact@v4
+        with:
+          name: POSTAL2-Linux-Game
+          path: ~/postal2-linux
+          compression-level: 9
+          retention-days: 2
+          if-no-files-found: error
+
+
+  # ============================================================
+  # 2. СОБИРАЕМ НАСТОЯЩИЙ IOS RUNTIME BOX86 / BOX64
+  # ============================================================
+
+  ios-runtime:
+    name: Build iOS Runtime
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+
+      - name: Show Xcode
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Clone BoxiOS
+        run: |
+          git clone \
+            --depth 1 \
+            https://github.com/cloverfield11/BoxiOS.git \
+            BoxiOS
+
+          cd BoxiOS
+
+          echo "====================================="
+          echo "BOXIOS FILES"
+          echo "====================================="
+
+          ls -la
+
+          test -d BoxiOS.xcodeproj
+          test -f project.yml
+
+      - name: Check Box86 and Box64 libraries
+        run: |
+          cd BoxiOS
+
+          echo "====================================="
+          echo "BOX86 / BOX64"
+          echo "====================================="
+
+          find ReleaseAssets \
+            -type f \
+            \( \
+              -name "libbox86*" \
+              -o \
+              -name "libbox64*" \
+            \) \
+            -print
+
+          BOX86="$(find ReleaseAssets -type f -name 'libbox86*.a' | head -1)"
+          BOX64="$(find ReleaseAssets -type f -name 'libbox64*.a' | head -1)"
+
+          if [ -z "$BOX86" ]; then
+            echo "ERROR: libbox86.a missing"
+            exit 1
+          fi
+
+          if [ -z "$BOX64" ]; then
+            echo "ERROR: libbox64.a missing"
+            exit 1
+          fi
+
+          echo "Box86: $BOX86"
+          echo "Box64: $BOX64"
+
+          file "$BOX86"
+          file "$BOX64"
+
+      - name: Resolve Swift packages
+        run: |
+          cd BoxiOS
+
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project BoxiOS.xcodeproj \
+            -scheme BoxiOS
+
+      - name: Build POSTAL 2 iOS runtime
+        run: |
+          cd BoxiOS
+
+          set -o pipefail
+
+          xcodebuild \
+            -project BoxiOS.xcodeproj \
+            -scheme BoxiOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PRODUCT_BUNDLE_IDENTIFIER="com.postal2.ios.runtime" \
+            build \
+            2>&1 | tee xcode-build.log
+
+      - name: Show Xcode errors
+        if: always()
+        run: |
+          cd BoxiOS
+
+          echo "====================================="
+          echo "REAL XCODE ERRORS"
+          echo "====================================="
+
+          grep -Ei \
+            "error:|fatal error:|undefined symbols|ld:|no such module|cannot find|failed" \
+            xcode-build.log \
+            | tail -150 || true
+
+      - name: Find app
+        run: |
+          cd BoxiOS
+
+          APP="$(find build/Build/Products \
+            -type d \
+            -name "*.app" \
+            -path "*Release-iphoneos*" \
+            | head -1)"
+
+          if [ -z "$APP" ]; then
+            echo "ERROR: .app not found"
+            exit 1
+          fi
+
+          echo "APP=$APP" >> "$GITHUB_ENV"
+
+          echo "Found:"
+          echo "$APP"
+
+          du -sh "$APP"
+
+      - name: Rename app display name
+        run: |
+          cd BoxiOS
+
+          INFO="$APP/Info.plist"
+
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleDisplayName POSTAL 2" \
+            "$INFO" \
+            2>/dev/null \
+          || \
+          /usr/libexec/PlistBuddy \
+            -c "Add :CFBundleDisplayName string POSTAL 2" \
+            "$INFO"
+
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleIdentifier" \
+            "$INFO" || true
+
+      - name: Create unsigned IPA
+        run: |
+          cd BoxiOS
+
+          rm -rf Payload
+          mkdir Payload
+
+          cp -R "$APP" Payload/
+
+          ditto \
+            -c \
+            -k \
+            --sequesterRsrc \
+            --keepParent \
+            Payload \
+            POSTAL2-iOS-Runtime.ipa
+
+          ls -lh POSTAL2-iOS-Runtime.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: POSTAL2-iOS-Runtime-IPA
+          path: BoxiOS/POSTAL2-iOS-Runtime.ipa
+          compression-level: 0
+          retention-days: 2
+          if-no-files-found: error
