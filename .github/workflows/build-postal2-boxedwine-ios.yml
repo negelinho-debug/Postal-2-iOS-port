@@ -13,10 +13,6 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      # ==========================================================
-      # CHECKOUT
-      # ==========================================================
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -61,6 +57,83 @@ jobs:
 
           test -d source
           test -f source/sdl/main.cpp
+
+      # ==========================================================
+      # FIX APPLE CLANG BHashTable ITERATOR
+      #
+      # Fixes:
+      # no member named 'slot_index'
+      # no member named 'owner'
+      # ==========================================================
+
+      - name: Patch BHashTable for Apple Clang
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("Boxedwine/source/util/bhashtable.h")
+
+          if not p.exists():
+              raise SystemExit("bhashtable.h not found")
+
+          s = p.read_text()
+
+          if "using const_iterator::owner;" in s:
+              print("BHashTable patch already present")
+          else:
+              old = """struct iterator : public const_iterator {
+          	private:
+          """
+
+              new = """struct iterator : public const_iterator {
+          	using const_iterator::owner;
+          	using const_iterator::slot_index;
+
+          	private:
+          """
+
+              if old not in s:
+                  # More tolerant fallback for spaces/tabs.
+                  old2 = "struct iterator : public const_iterator {"
+
+                  if old2 not in s:
+                      raise SystemExit(
+                          "Could not find BHashTable iterator block"
+                      )
+
+                  new2 = """struct iterator : public const_iterator {
+              using const_iterator::owner;
+              using const_iterator::slot_index;
+          """
+
+                  s = s.replace(
+                      old2,
+                      new2,
+                      1
+                  )
+
+              else:
+                  s = s.replace(
+                      old,
+                      new,
+                      1
+                  )
+
+              p.write_text(s)
+
+              print(
+                  "Patched BHashTable iterator for Apple Clang"
+              )
+          PY
+
+          echo "===== PATCH RESULT ====="
+
+          grep -n -A35 \
+            "struct iterator : public const_iterator" \
+            Boxedwine/source/util/bhashtable.h \
+            | head -45
 
       # ==========================================================
       # SDL2
@@ -109,8 +182,8 @@ jobs:
             | head -1)"
 
           if [ -z "$SDL_LIB" ]; then
-            echo "ERROR: libSDL2.a not found"
-            exit 1
+              echo "ERROR: libSDL2.a not found"
+              exit 1
           fi
 
           mkdir -p "$GITHUB_WORKSPACE/Vendor"
@@ -165,16 +238,16 @@ jobs:
             mztools.c
           do
 
-            "$CC" \
-              -c \
-              -O3 \
-              -arch arm64 \
-              -isysroot "$SDK" \
-              -miphoneos-version-min=15.0 \
-              -Izlib-src \
-              -Izlib-src/contrib/minizip \
-              "zlib-src/contrib/minizip/$SRC" \
-              -o "minizip-build/${SRC%.c}.o"
+              "$CC" \
+                -c \
+                -O3 \
+                -arch arm64 \
+                -isysroot "$SDK" \
+                -miphoneos-version-min=15.0 \
+                -Izlib-src \
+                -Izlib-src/contrib/minizip \
+                "zlib-src/contrib/minizip/$SRC" \
+                -o "minizip-build/${SRC%.c}.o"
 
           done
 
@@ -194,7 +267,9 @@ jobs:
       # Documents:
       #
       # Wine.zip
-      # postal2/System/Postal2.exe
+      # postal2/
+      #   System/
+      #     Postal2.exe
       #
       # ==========================================================
 
@@ -281,11 +356,23 @@ jobs:
 
                   if (!exists(wineZip)) {
 
-                      std::string wineAlt =
+                      std::string alt1 =
                           docs + "/Wine-5.0.zip";
 
-                      if (exists(wineAlt)) {
-                          wineZip = wineAlt;
+                      std::string alt2 =
+                          docs + "/Wine-7.0.zip";
+
+                      std::string alt3 =
+                          docs + "/Wine-9.0.zip";
+
+                      if (exists(alt1)) {
+                          wineZip = alt1;
+                      }
+                      else if (exists(alt2)) {
+                          wineZip = alt2;
+                      }
+                      else if (exists(alt3)) {
+                          wineZip = alt3;
                       }
                   }
 
@@ -300,7 +387,7 @@ jobs:
 
                       message(
                           "POSTAL 2",
-                          "Положи Wine.zip в папку приложения через Файлы."
+                          "Нужен Wine.zip в папке приложения."
                       );
 
                       return 0;
@@ -430,10 +517,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>0.2</string>
+              <string>0.3</string>
 
               <key>CFBundleVersion</key>
-              <string>2</string>
+              <string>3</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -451,16 +538,24 @@ jobs:
 
               <array>
 
-                  <string>UIInterfaceOrientationLandscapeLeft</string>
+                  <string>
+                  UIInterfaceOrientationLandscapeLeft
+                  </string>
 
-                  <string>UIInterfaceOrientationLandscapeRight</string>
+                  <string>
+                  UIInterfaceOrientationLandscapeRight
+                  </string>
 
               </array>
 
-              <key>UIApplicationSupportsIndirectInputEvents</key>
+              <key>
+              UIApplicationSupportsIndirectInputEvents
+              </key>
+
               <true/>
 
               <key>UILaunchScreen</key>
+
               <dict/>
 
           </dict>
@@ -470,7 +565,9 @@ jobs:
 
       # ==========================================================
       # XCODE PROJECT
-      # C++20 FIX IS HERE
+      #
+      # IMPORTANT:
+      # BoxedWine requires C++20.
       # ==========================================================
 
       - name: Create Xcode project
@@ -666,7 +763,8 @@ jobs:
 
           xcodegen generate
 
-          test -d Postal2BoxedWine.xcodeproj
+          test -d \
+            Postal2BoxedWine.xcodeproj
 
           echo "===== C++ STANDARD ====="
 
@@ -688,7 +786,8 @@ jobs:
           set +e
           set -o pipefail
 
-          rm -f boxedwine-ios-build.log
+          rm -f \
+            boxedwine-ios-build.log
 
           xcodebuild \
             -quiet \
@@ -726,12 +825,12 @@ jobs:
 
           if [ "$STATUS" != "0" ]; then
 
-            echo
-            echo "===== LAST 150 LINES ====="
+              echo
+              echo "===== LAST 160 LINES ====="
 
-            tail -150 \
-              boxedwine-ios-build.log \
-              || true
+              tail -160 \
+                boxedwine-ios-build.log \
+                || true
 
           fi
 
@@ -755,9 +854,9 @@ jobs:
 
           if [ -z "$APP" ]; then
 
-            echo "ERROR: iPhone app not found"
+              echo "ERROR: iPhone app not found"
 
-            exit 1
+              exit 1
 
           fi
 
@@ -771,7 +870,7 @@ jobs:
           du -sh "$APP"
 
       # ==========================================================
-      # CREATE IPA
+      # IPA
       # ==========================================================
 
       - name: Create IPA
@@ -793,16 +892,18 @@ jobs:
             POSTAL2-BoxedWine-iOS.ipa \
             Payload
 
-          test -f POSTAL2-BoxedWine-iOS.ipa
+          test -f \
+            POSTAL2-BoxedWine-iOS.ipa
 
           echo "===== IPA ====="
 
-          ls -lh POSTAL2-BoxedWine-iOS.ipa
+          ls -lh \
+            POSTAL2-BoxedWine-iOS.ipa
 
       # ==========================================================
       # RELEASE
       #
-      # No Actions Artifact storage needed.
+      # No Actions artifact quota required.
       # ==========================================================
 
       - name: Publish IPA to Releases
@@ -829,10 +930,10 @@ jobs:
             --notes "Unsigned POSTAL 2 BoxedWine iOS runtime."
 
           {
-            echo
-            echo "# ✅ POSTAL 2 IPA READY"
-            echo
-            echo "Открой Releases этого репозитория."
-            echo
-            echo "Скачай POSTAL2-BoxedWine-iOS.ipa"
+              echo
+              echo "# ✅ POSTAL 2 IPA READY"
+              echo
+              echo "Открой Releases."
+              echo
+              echo "Скачай POSTAL2-BoxedWine-iOS.ipa"
           } >> "$GITHUB_STEP_SUMMARY"
