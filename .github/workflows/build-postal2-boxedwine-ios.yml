@@ -59,7 +59,7 @@ jobs:
           test -f source/sdl/main.cpp
 
       # ==========================================================
-      # FIX BHASHTABLE FOR APPLE CLANG
+      # BHASHTABLE APPLE CLANG FIX
       # ==========================================================
 
       - name: Patch BHashTable for Apple Clang
@@ -100,7 +100,7 @@ jobs:
               p.write_text(s)
 
               print(
-                  "Patched BHashTable iterator for Apple Clang"
+                  "BHashTable patched for Apple Clang"
               )
           PY
 
@@ -114,12 +114,11 @@ jobs:
       # ==========================================================
       # SIMDE
       #
-      # BoxedWine uses:
-      # simde/x86/sse.h
-      # simde/x86/sse2.h
+      # IMPORTANT:
+      # use stable v0.8.2 instead of latest master
       # ==========================================================
 
-      - name: Clone SIMDe
+      - name: Clone stable SIMDe
         run: |
           set -e
 
@@ -127,13 +126,30 @@ jobs:
 
           git clone \
             --depth 1 \
+            --branch v0.8.2 \
             https://github.com/simd-everywhere/simde.git \
             SIMDe
 
-          echo "===== SIMDE ====="
+          echo "===== SIMDE VERSION ====="
 
-          test -f SIMDe/simde/x86/sse.h
-          test -f SIMDe/simde/x86/sse2.h
+          cd SIMDe
+
+          git describe \
+            --tags \
+            --always
+
+          cd ..
+
+          test -f \
+            SIMDe/simde/x86/sse.h
+
+          test -f \
+            SIMDe/simde/x86/sse2.h
+
+          test -f \
+            SIMDe/simde/simde-common.h
+
+          echo "===== SIMDE FILES ====="
 
           ls -lh \
             SIMDe/simde/x86/sse.h \
@@ -190,7 +206,8 @@ jobs:
               exit 1
           fi
 
-          mkdir -p "$GITHUB_WORKSPACE/Vendor"
+          mkdir -p \
+            "$GITHUB_WORKSPACE/Vendor"
 
           cp \
             "$SDL_LIB" \
@@ -219,7 +236,8 @@ jobs:
             https://github.com/madler/zlib.git \
             zlib-src
 
-          mkdir -p Vendor/include/minizip
+          mkdir -p \
+            Vendor/include/minizip
 
           cp \
             zlib-src/contrib/minizip/*.h \
@@ -233,6 +251,7 @@ jobs:
           CC="$(xcrun --sdk iphoneos -f clang)"
 
           rm -rf minizip-build
+
           mkdir -p minizip-build
 
           for SRC in \
@@ -262,19 +281,22 @@ jobs:
 
           echo "===== MINIZIP ====="
 
-          file Vendor/libminizip.a
-          ls -lh Vendor/libminizip.a
+          file \
+            Vendor/libminizip.a
+
+          ls -lh \
+            Vendor/libminizip.a
 
       # ==========================================================
       # IPHONE LAUNCHER
       #
-      # Documents:
+      # Later:
       #
-      # Wine.zip
-      # postal2/
-      #   System/
-      #     Postal2.exe
-      #
+      # Documents/
+      #   Wine.zip
+      #   postal2/
+      #     System/
+      #       Postal2.exe
       # ==========================================================
 
       - name: Create iPhone launcher
@@ -309,7 +331,7 @@ jobs:
               ) == 0;
           }
 
-          static void message(
+          static void showMessage(
               const char* title,
               const char* text
           ) {
@@ -360,29 +382,19 @@ jobs:
 
                   if (!exists(wineZip)) {
 
-                      std::string alt1 =
-                          docs + "/Wine-5.0.zip";
+                      std::vector<std::string> wines = {
+                          docs + "/Wine-5.0.zip",
+                          docs + "/Wine-7.0.zip",
+                          docs + "/Wine-9.0.zip",
+                          docs + "/Wine-11.0.zip"
+                      };
 
-                      std::string alt2 =
-                          docs + "/Wine-7.0.zip";
+                      for (const auto& w : wines) {
 
-                      std::string alt3 =
-                          docs + "/Wine-9.0.zip";
-
-                      std::string alt4 =
-                          docs + "/Wine-11.0.zip";
-
-                      if (exists(alt1)) {
-                          wineZip = alt1;
-                      }
-                      else if (exists(alt2)) {
-                          wineZip = alt2;
-                      }
-                      else if (exists(alt3)) {
-                          wineZip = alt3;
-                      }
-                      else if (exists(alt4)) {
-                          wineZip = alt4;
+                          if (exists(w)) {
+                              wineZip = w;
+                              break;
+                          }
                       }
                   }
 
@@ -395,7 +407,7 @@ jobs:
 
                   if (!exists(wineZip)) {
 
-                      message(
+                      showMessage(
                           "POSTAL 2",
                           "Нужен Wine.zip в папке приложения."
                       );
@@ -405,7 +417,7 @@ jobs:
 
                   if (!exists(exe)) {
 
-                      message(
+                      showMessage(
                           "POSTAL 2",
                           "Положи папку postal2 в Documents приложения."
                       );
@@ -527,10 +539,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>0.4</string>
+              <string>0.5</string>
 
               <key>CFBundleVersion</key>
-              <string>4</string>
+              <string>5</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -576,7 +588,9 @@ jobs:
       # ==========================================================
       # XCODE PROJECT
       #
-      # C++20 + SIMDE
+      # C++20
+      # Stable SIMDe
+      # Vector builtins disabled
       # ==========================================================
 
       - name: Create Xcode project
@@ -700,6 +714,20 @@ jobs:
 
                     - "BOXEDWINE_DISABLE_UI=1"
 
+                    # ============================================
+                    # SIMDE APPLE CLANG FIX
+                    # ============================================
+
+                    - "SIMDE_NO_NATIVE=1"
+
+                    - "SIMDE_NO_VECTOR=1"
+
+                    - "SIMDE_NO_SHUFFLE_VECTOR=1"
+
+                    - "SIMDE_NO_CONVERT_VECTOR=1"
+
+                    - "SIMDE_NO_CHECK_IMMEDIATE_CONSTANT=1"
+
                     - "GLH=<SDL_opengles2.h>"
 
                   OTHER_CFLAGS:
@@ -708,6 +736,16 @@ jobs:
 
                     - "-Wno-error"
 
+                    - "-DSIMDE_NO_NATIVE"
+
+                    - "-DSIMDE_NO_VECTOR"
+
+                    - "-DSIMDE_NO_SHUFFLE_VECTOR"
+
+                    - "-DSIMDE_NO_CONVERT_VECTOR"
+
+                    - "-DSIMDE_NO_CHECK_IMMEDIATE_CONSTANT"
+
                   OTHER_CPLUSPLUSFLAGS:
 
                     - "$(inherited)"
@@ -715,6 +753,16 @@ jobs:
                     - "-std=gnu++20"
 
                     - "-Wno-error"
+
+                    - "-DSIMDE_NO_NATIVE"
+
+                    - "-DSIMDE_NO_VECTOR"
+
+                    - "-DSIMDE_NO_SHUFFLE_VECTOR"
+
+                    - "-DSIMDE_NO_CONVERT_VECTOR"
+
+                    - "-DSIMDE_NO_CHECK_IMMEDIATE_CONSTANT"
 
                     - "-Wno-deprecated-declarations"
 
@@ -777,24 +825,14 @@ jobs:
           test -d \
             Postal2BoxedWine.xcodeproj
 
-          echo "===== C++ STANDARD ====="
+          echo "===== BUILD SETTINGS ====="
 
           xcodebuild \
             -project Postal2BoxedWine.xcodeproj \
             -scheme Postal2BoxedWine \
             -showBuildSettings \
-            | grep \
-            CLANG_CXX_LANGUAGE_STANDARD \
-            || true
-
-          echo "===== SIMDE SEARCH PATH ====="
-
-          xcodebuild \
-            -project Postal2BoxedWine.xcodeproj \
-            -scheme Postal2BoxedWine \
-            -showBuildSettings \
-            | grep \
-            HEADER_SEARCH_PATHS \
+            | grep -E \
+            "CLANG_CXX_LANGUAGE_STANDARD|HEADER_SEARCH_PATHS|SIMDE" \
             || true
 
       # ==========================================================
@@ -824,6 +862,7 @@ jobs:
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
             CLANG_CXX_LANGUAGE_STANDARD=gnu++20 \
+            GCC_PREPROCESSOR_DEFINITIONS='$(inherited) BOXEDWINE_64=1 BOXEDWINE_ES=1 BOXEDWINE_OPENGL_SDL=1 BOXEDWINE_ZLIB=1 BOXEDWINE_DISABLE_UI=1 SIMDE_NO_NATIVE=1 SIMDE_NO_VECTOR=1 SIMDE_NO_SHUFFLE_VECTOR=1 SIMDE_NO_CONVERT_VECTOR=1 SIMDE_NO_CHECK_IMMEDIATE_CONSTANT=1 GLH=<SDL_opengles2.h>' \
             build \
             2>&1 | tee boxedwine-ios-build.log
 
@@ -847,9 +886,9 @@ jobs:
           if [ "$STATUS" != "0" ]; then
 
               echo
-              echo "===== LAST 180 LINES ====="
+              echo "===== LAST 200 LINES ====="
 
-              tail -180 \
+              tail -200 \
                 boxedwine-ios-build.log \
                 || true
 
@@ -891,7 +930,7 @@ jobs:
           du -sh "$APP"
 
       # ==========================================================
-      # IPA
+      # CREATE IPA
       # ==========================================================
 
       - name: Create IPA
