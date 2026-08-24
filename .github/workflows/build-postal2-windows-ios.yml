@@ -3,6 +3,9 @@ name: POSTAL 2 Windows iOS
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build Windows Runtime
@@ -10,30 +13,47 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      # ==========================================================
+      # REPOSITORY
+      # ==========================================================
+
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Show Xcode
         run: |
+          echo "===== XCODE ====="
           xcodebuild -version
+
+          echo "===== IPHONEOS SDK ====="
           xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphoneos --show-sdk-path
+
+      # ==========================================================
+      # TOOLS
+      # ==========================================================
 
       - name: Install tools
         run: |
-          brew install xcodegen gnu-make
+          set -e
 
-          echo "XcodeGen:"
+          brew install xcodegen make
+
+          echo "===== XCODEGEN ====="
           xcodegen --version
 
-          echo "GNU Make:"
+          echo "===== GNU MAKE ====="
           gmake --version | head -1
 
-      # ============================================================
-      # WineGlass = Windows PE/x86 runtime made specifically for iOS
-      # ============================================================
+      # ==========================================================
+      # WINEGLASS
+      # Windows PE x86/x86-64 runtime for iOS
+      # ==========================================================
 
       - name: Clone WineGlass
         run: |
+          set -e
+
           rm -rf WineGlass
 
           git clone \
@@ -44,17 +64,24 @@ jobs:
           cd WineGlass
 
           echo "===== WINEGLASS ====="
+          git rev-parse HEAD
           ls -la
 
           test -f project.yml
+          test -d Sources
+          test -d Vendor/blink
           test -f Vendor/blink/wg_blink_impl.c
+          test -f Sources/App/Info.plist
 
-      # ============================================================
-      # Build Blink x86 -> ARM64 for iPhone
-      # ============================================================
+      # ==========================================================
+      # BLINK
+      # x86 -> ARM64 CPU translation
+      # ==========================================================
 
       - name: Clone Blink
         run: |
+          set -e
+
           rm -rf blink
 
           git clone \
@@ -67,6 +94,8 @@ jobs:
           echo "===== BLINK ====="
           git rev-parse HEAD
           ls -la
+
+          test -f configure
 
       - name: Configure Blink for iPhone
         run: |
@@ -82,24 +111,22 @@ jobs:
           echo "CC=$CC"
           echo "AR=$AR"
 
+          if [ -f config.h.ios ]; then
+            cp config.h.ios config.h
+          fi
+
           ./configure \
             CC="$CC" \
             AR="$AR" \
-            CFLAGS="-O3 -arch arm64 -isysroot $SDK -miphoneos-version-min=17.0" \
+            CFLAGS="-g -O2 -arch arm64 -isysroot $SDK -miphoneos-version-min=17.0" \
             --disable-threads \
             --disable-sockets \
             --disable-jit
 
-          # WineGlass recommends disabling BMI2 on the iOS interpreter.
-          if grep -q "// #define DISABLE_BMI2" config.h; then
-            sed -i '' \
-              's@// #define DISABLE_BMI2@#define DISABLE_BMI2@' \
-              config.h
-          fi
+          echo "===== GENERATED CONFIG ====="
 
-          echo "===== CONFIG ====="
           grep -E \
-            "DISABLE_BMI2|DISABLE_JIT|HAVE_SYNC" \
+            "DISABLE_JIT|DISABLE_THREADS|DISABLE_SOCKETS|DISABLE_BMI2" \
             config.h || true
 
       - name: Build Blink library
@@ -108,12 +135,15 @@ jobs:
 
           cd blink
 
+          echo "===== BUILDING BLINK ====="
+
           gmake \
             -j"$(sysctl -n hw.ncpu)" \
             o//blink/blink.a
 
           test -f o//blink/blink.a
 
+          echo "===== BLINK LIBRARY ====="
           file o//blink/blink.a
           ls -lh o//blink/blink.a
 
@@ -124,6 +154,10 @@ jobs:
             o//blink/blink.a \
             "$GITHUB_WORKSPACE/WineGlass/Vendor/blink/lib/blink.a"
 
+      # ==========================================================
+      # WINEGLASS <-> BLINK BRIDGE
+      # ==========================================================
+
       - name: Build WineGlass Blink bridge
         run: |
           set -e
@@ -133,37 +167,44 @@ jobs:
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           CC="$(xcrun --sdk iphoneos -f clang)"
 
+          OUTPUT="$GITHUB_WORKSPACE/WineGlass/Vendor/blink/lib/wg_blink_impl.o"
+
           mkdir -p \
             "$GITHUB_WORKSPACE/WineGlass/Vendor/blink/lib"
 
           "$CC" \
             -c \
             -std=c11 \
-            -O3 \
+            -g \
+            -O2 \
             -arch arm64 \
             -isysroot "$SDK" \
             -miphoneos-version-min=17.0 \
             -D_FILE_OFFSET_BITS=64 \
             -D_DARWIN_C_SOURCE \
             -DTARGET_OS_IPHONE=1 \
+            -isystem "$SDK/usr/include" \
             -I. \
             -include config.h \
             "$GITHUB_WORKSPACE/WineGlass/Vendor/blink/wg_blink_impl.c" \
-            -o \
-            "$GITHUB_WORKSPACE/WineGlass/Vendor/blink/lib/wg_blink_impl.o"
+            -o "$OUTPUT"
 
-          echo "===== BLINK OUTPUT ====="
+          test -f "$OUTPUT"
 
-          file \
-            "$GITHUB_WORKSPACE/WineGlass/Vendor/blink/lib/blink.a"
+          echo "===== BRIDGE ====="
+          file "$OUTPUT"
+          ls -lh "$OUTPUT"
 
-          file \
-            "$GITHUB_WORKSPACE/WineGlass/Vendor/blink/lib/wg_blink_impl.o"
+          echo "===== FINAL BLINK FILES ====="
+          ls -lh \
+            "$GITHUB_WORKSPACE/WineGlass/Vendor/blink/lib/"
 
-      # ============================================================
-      # Make Documents visible in the iPhone Files app.
-      # This lets us copy YOUR EXISTING postal2 folder later.
-      # ============================================================
+      # ==========================================================
+      # MAKE APP DOCUMENTS VISIBLE IN FILES
+      #
+      # Later we can place the EXISTING postal2 folder here.
+      # This workflow DOES NOT download POSTAL 2 again.
+      # ==========================================================
 
       - name: Enable Files app
         run: |
@@ -173,53 +214,64 @@ jobs:
 
           PLIST="Sources/App/Info.plist"
 
-          /usr/libexec/PlistBuddy \
-            -c "Add :UIFileSharingEnabled bool true" \
-            "$PLIST" \
-            2>/dev/null \
-          || \
+          test -f "$PLIST"
+
           /usr/libexec/PlistBuddy \
             -c "Set :UIFileSharingEnabled true" \
-            "$PLIST"
-
-          /usr/libexec/PlistBuddy \
-            -c "Add :LSSupportsOpeningDocumentsInPlace bool true" \
             "$PLIST" \
             2>/dev/null \
           || \
+          /usr/libexec/PlistBuddy \
+            -c "Add :UIFileSharingEnabled bool true" \
+            "$PLIST"
+
           /usr/libexec/PlistBuddy \
             -c "Set :LSSupportsOpeningDocumentsInPlace true" \
-            "$PLIST"
-
-          /usr/libexec/PlistBuddy \
-            -c "Add :CFBundleDisplayName string POSTAL 2 Windows" \
             "$PLIST" \
             2>/dev/null \
           || \
           /usr/libexec/PlistBuddy \
-            -c "Set :CFBundleDisplayName POSTAL 2 Windows" \
+            -c "Add :LSSupportsOpeningDocumentsInPlace bool true" \
+            "$PLIST"
+
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleDisplayName POSTAL 2" \
+            "$PLIST" \
+            2>/dev/null \
+          || \
+          /usr/libexec/PlistBuddy \
+            -c "Add :CFBundleDisplayName string POSTAL 2" \
             "$PLIST"
 
           echo "===== INFO.PLIST ====="
           plutil -p "$PLIST"
 
+      # ==========================================================
+      # GENERATE XCODE PROJECT
+      # ==========================================================
+
       - name: Generate Xcode project
         run: |
+          set -e
+
           cd WineGlass
 
           xcodegen generate
 
           test -d WineGlass.xcodeproj
 
-      # ============================================================
-      # Build real iPhone arm64 app
-      # ============================================================
+          echo "===== XCODE PROJECT ====="
+          ls -la WineGlass.xcodeproj
+
+      # ==========================================================
+      # BUILD UNSIGNED IPHONE APP
+      # ==========================================================
 
       - name: Build iPhone app
         run: |
-          cd WineGlass
-
           set -o pipefail
+
+          cd WineGlass
 
           xcodebuild \
             -project WineGlass.xcodeproj \
@@ -236,33 +288,54 @@ jobs:
             build \
             2>&1 | tee xcode-build.log
 
+      # ==========================================================
+      # ERRORS
+      # Does not itself fail when an earlier step failed.
+      # ==========================================================
+
       - name: Show real errors
         if: always()
         run: |
+          echo "======================================"
+          echo "REAL BUILD ERRORS"
+          echo "======================================"
+
+          if [ ! -d WineGlass ]; then
+            echo "WineGlass folder does not exist."
+            exit 0
+          fi
+
           cd WineGlass
 
-          echo "======================================"
-          echo "REAL XCODE ERRORS"
-          echo "======================================"
+          if [ ! -f xcode-build.log ]; then
+            echo "xcode-build.log does not exist."
+            exit 0
+          fi
 
           grep -Ei \
-            "error:|fatal error:|undefined symbols|ld:|cannot find|no such module|failed" \
+            "error:|fatal error:|undefined symbols|ld:|cannot find|no such module|failed|duplicate symbol|architecture" \
             xcode-build.log \
-            | tail -200 || true
+            | tail -250 || true
+
+      # ==========================================================
+      # FIND APP
+      # ==========================================================
 
       - name: Find built app
         run: |
+          set -e
+
           cd WineGlass
 
           APP="$(find \
-            build/Build/Products/Release-iphoneos \
-            -maxdepth 2 \
+            build/Build/Products \
             -type d \
-            -name '*.app' \
+            -name "*.app" \
+            -path "*Release-iphoneos*" \
             | head -1)"
 
           if [ -z "$APP" ]; then
-            echo "ERROR: iPhone .app not found"
+            echo "ERROR: Release iPhone .app was not found."
             exit 1
           fi
 
@@ -270,18 +343,32 @@ jobs:
 
           echo "===== APP ====="
           echo "$APP"
+
           du -sh "$APP"
+          ls -la "$APP"
+
+      # ==========================================================
+      # FINAL INFO.PLIST
+      # ==========================================================
 
       - name: Final Info plist
         run: |
+          set -e
+
           cd WineGlass
 
           PLIST="$APP/Info.plist"
 
+          test -f "$PLIST"
+
           /usr/libexec/PlistBuddy \
             -c "Set :CFBundleDisplayName POSTAL 2" \
             "$PLIST" \
-            2>/dev/null || true
+            2>/dev/null \
+          || \
+          /usr/libexec/PlistBuddy \
+            -c "Add :CFBundleDisplayName string POSTAL 2" \
+            "$PLIST"
 
           /usr/libexec/PlistBuddy \
             -c "Set :UIFileSharingEnabled true" \
@@ -301,14 +388,17 @@ jobs:
             -c "Add :LSSupportsOpeningDocumentsInPlace bool true" \
             "$PLIST"
 
+          echo "===== FINAL PLIST ====="
           plutil -p "$PLIST"
 
-      # ============================================================
-      # Create unsigned IPA
-      # ============================================================
+      # ==========================================================
+      # UNSIGNED IPA
+      # ==========================================================
 
       - name: Create IPA
         run: |
+          set -e
+
           cd WineGlass
 
           rm -rf Payload
@@ -316,14 +406,20 @@ jobs:
 
           cp -R "$APP" Payload/
 
-          zip \
+          /usr/bin/zip \
             -r \
             -9 \
             POSTAL2-Windows-Runtime.ipa \
             Payload
 
+          test -f POSTAL2-Windows-Runtime.ipa
+
           echo "===== IPA ====="
           ls -lh POSTAL2-Windows-Runtime.ipa
+
+      # ==========================================================
+      # DOWNLOAD
+      # ==========================================================
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
