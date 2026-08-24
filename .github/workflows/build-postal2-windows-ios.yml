@@ -37,7 +37,7 @@ jobs:
         run: |
           set -e
 
-          brew install xcodegen make
+          brew install xcodegen make flock
 
           echo "===== XCODEGEN ====="
           xcodegen --version
@@ -45,9 +45,13 @@ jobs:
           echo "===== GNU MAKE ====="
           gmake --version | head -1
 
+          echo "===== FLOCK ====="
+          export PATH="$(brew --prefix flock)/bin:$PATH"
+          command -v flock
+          flock --version || true
+
       # ==========================================================
       # WINEGLASS
-      # Windows PE x86/x86-64 runtime for iOS
       # ==========================================================
 
       - name: Clone WineGlass
@@ -75,7 +79,7 @@ jobs:
 
       # ==========================================================
       # BLINK
-      # x86 -> ARM64 CPU translation
+      # x86/x86-64 -> ARM64
       # ==========================================================
 
       - name: Clone Blink
@@ -103,6 +107,11 @@ jobs:
 
           cd blink
 
+          export PATH="$(brew --prefix flock)/bin:$PATH"
+
+          echo "===== HOST FLOCK ====="
+          command -v flock
+
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           CC="$(xcrun --sdk iphoneos -f clang)"
           AR="$(xcrun --sdk iphoneos -f ar)"
@@ -113,6 +122,7 @@ jobs:
 
           if [ -f config.h.ios ]; then
             cp config.h.ios config.h
+            echo "Using config.h.ios"
           fi
 
           ./configure \
@@ -129,11 +139,17 @@ jobs:
             "DISABLE_JIT|DISABLE_THREADS|DISABLE_SOCKETS|DISABLE_BMI2" \
             config.h || true
 
+      # ==========================================================
+      # BUILD BLINK
+      # ==========================================================
+
       - name: Build Blink library
         run: |
           set -e
 
           cd blink
+
+          export PATH="$(brew --prefix flock)/bin:$PATH"
 
           echo "===== BUILDING BLINK ====="
 
@@ -200,10 +216,7 @@ jobs:
             "$GITHUB_WORKSPACE/WineGlass/Vendor/blink/lib/"
 
       # ==========================================================
-      # MAKE APP DOCUMENTS VISIBLE IN FILES
-      #
-      # Later we can place the EXISTING postal2 folder here.
-      # This workflow DOES NOT download POSTAL 2 again.
+      # ENABLE FILE SHARING
       # ==========================================================
 
       - name: Enable Files app
@@ -264,7 +277,7 @@ jobs:
           ls -la WineGlass.xcodeproj
 
       # ==========================================================
-      # BUILD UNSIGNED IPHONE APP
+      # BUILD IPHONE APP
       # ==========================================================
 
       - name: Build iPhone app
@@ -289,8 +302,7 @@ jobs:
             2>&1 | tee xcode-build.log
 
       # ==========================================================
-      # ERRORS
-      # Does not itself fail when an earlier step failed.
+      # ERROR LOG
       # ==========================================================
 
       - name: Show real errors
@@ -373,68 +385,4 @@ jobs:
           /usr/libexec/PlistBuddy \
             -c "Set :UIFileSharingEnabled true" \
             "$PLIST" \
-            2>/dev/null \
-          || \
-          /usr/libexec/PlistBuddy \
-            -c "Add :UIFileSharingEnabled bool true" \
-            "$PLIST"
-
-          /usr/libexec/PlistBuddy \
-            -c "Set :LSSupportsOpeningDocumentsInPlace true" \
-            "$PLIST" \
-            2>/dev/null \
-          || \
-          /usr/libexec/PlistBuddy \
-            -c "Add :LSSupportsOpeningDocumentsInPlace bool true" \
-            "$PLIST"
-
-          echo "===== FINAL PLIST ====="
-          plutil -p "$PLIST"
-
-      # ==========================================================
-      # UNSIGNED IPA
-      # ==========================================================
-
-      - name: Create IPA
-        run: |
-          set -e
-
-          cd WineGlass
-
-          rm -rf Payload
-          mkdir -p Payload
-
-          cp -R "$APP" Payload/
-
-          /usr/bin/zip \
-            -r \
-            -9 \
-            POSTAL2-Windows-Runtime.ipa \
-            Payload
-
-          test -f POSTAL2-Windows-Runtime.ipa
-
-          echo "===== IPA ====="
-          ls -lh POSTAL2-Windows-Runtime.ipa
-
-      # ==========================================================
-      # DOWNLOAD
-      # ==========================================================
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: POSTAL2-Windows-iOS
-          path: WineGlass/POSTAL2-Windows-Runtime.ipa
-          compression-level: 0
-          retention-days: 2
-          if-no-files-found: error
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: POSTAL2-Windows-Build-Log
-          path: WineGlass/xcode-build.log
-          retention-days: 2
-          if-no-files-found: ignore
+           
