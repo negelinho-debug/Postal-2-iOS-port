@@ -1,0 +1,677 @@
+name: POSTAL 2 BoxedWine iOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build BoxedWine iPhone Runtime
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ==========================================================
+      # TOOLS
+      # ==========================================================
+
+      - name: Install tools
+        run: |
+          set -e
+
+          brew install xcodegen
+
+          echo "===== XCODE ====="
+          xcodebuild -version
+
+          echo "===== XCODEGEN ====="
+          xcodegen --version
+
+          echo "===== IPHONE SDK ====="
+          xcrun --sdk iphoneos --show-sdk-version
+
+      # ==========================================================
+      # BOXEDWINE
+      # ==========================================================
+
+      - name: Clone BoxedWine
+        run: |
+          set -e
+
+          rm -rf Boxedwine
+
+          git clone \
+            --depth 1 \
+            https://github.com/danoon2/Boxedwine.git \
+            Boxedwine
+
+          cd Boxedwine
+
+          echo "===== BOXEDWINE ====="
+          git rev-parse HEAD
+
+          test -d source
+          test -d platform/sdl
+          test -f source/sdl/main.cpp
+
+      # ==========================================================
+      # SDL2
+      # BoxedWine uses SDL2, not SDL3.
+      # ==========================================================
+
+      - name: Clone SDL2
+        run: |
+          set -e
+
+          rm -rf SDL2
+
+          git clone \
+            --depth 1 \
+            --branch release-2.32.10 \
+            https://github.com/libsdl-org/SDL.git \
+            SDL2
+
+          test -d SDL2/Xcode/SDL
+          test -d SDL2/include
+
+      - name: Build SDL2 for iPhone
+        run: |
+          set -e
+          set -o pipefail
+
+          cd SDL2
+
+          rm -rf sdlbuild
+
+          xcodebuild \
+            -project Xcode/SDL/SDL.xcodeproj \
+            -target "Static Library-iOS" \
+            -configuration Release \
+            -sdk iphoneos \
+            ONLY_ACTIVE_ARCH=NO \
+            ARCHS=arm64 \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            CODE_SIGNING_ALLOWED=NO \
+            SYMROOT="$PWD/sdlbuild" \
+            build \
+            2>&1 | tee sdl-build.log
+
+          SDL_LIB="$(find sdlbuild \
+            -type f \
+            -name 'libSDL2.a' \
+            | head -1)"
+
+          if [ -z "$SDL_LIB" ]; then
+            echo "ERROR: libSDL2.a not found"
+            find sdlbuild -type f | head -100
+            exit 1
+          fi
+
+          echo "SDL_LIB=$SDL_LIB"
+
+          mkdir -p "$GITHUB_WORKSPACE/Vendor"
+
+          cp "$SDL_LIB" \
+            "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
+
+          ls -lh \
+            "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
+
+      # ==========================================================
+      # MINIZIP
+      # Needed for Wine.zip filesystem support.
+      # ==========================================================
+
+      - name: Clone zlib minizip
+        run: |
+          set -e
+
+          rm -rf zlib-src
+
+          git clone \
+            --depth 1 \
+            https://github.com/madler/zlib.git \
+            zlib-src
+
+          mkdir -p Vendor/include/minizip
+
+          cp zlib-src/contrib/minizip/*.h \
+            Vendor/include/minizip/
+
+      - name: Build minizip for iPhone
+        run: |
+          set -e
+
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          CC="$(xcrun --sdk iphoneos -f clang)"
+
+          rm -rf minizip-build
+          mkdir minizip-build
+
+          for SRC in \
+            ioapi.c \
+            unzip.c \
+            zip.c \
+            mztools.c
+          do
+
+            "$CC" \
+              -c \
+              -O3 \
+              -arch arm64 \
+              -isysroot "$SDK" \
+              -miphoneos-version-min=15.0 \
+              -I"$SDK/usr/include" \
+              -Izlib-src \
+              -Izlib-src/contrib/minizip \
+              "zlib-src/contrib/minizip/$SRC" \
+              -o \
+              "minizip-build/${SRC%.c}.o"
+
+          done
+
+          /usr/bin/libtool \
+            -static \
+            -o Vendor/libminizip.a \
+            minizip-build/*.o
+
+          file Vendor/libminizip.a
+          ls -lh Vendor/libminizip.a
+
+      # ==========================================================
+      # IPHONE LAUNCHER
+      #
+      # Documents/
+      #   Wine.zip
+      #   postal2/
+      #      System/Postal2.exe
+      #
+      # BoxedWine mounts postal2 as Windows drive D:
+      # ==========================================================
+
+      - name: Create iPhone launcher
+        run: |
+          set -e
+
+          mkdir -p IOSHost
+
+          cat > IOSHost/main.mm <<'EOF'
+          #import <Foundation/Foundation.h>
+
+          #include <SDL.h>
+          #include <unistd.h>
+          #include <sys/stat.h>
+
+          #include <string>
+          #include <vector>
+
+          extern int boxedmain(int argc, const char **argv);
+
+          static bool exists(const std::string& path) {
+              struct stat st {};
+              return stat(path.c_str(), &st) == 0;
+          }
+
+          static void showMessage(const char* title, const char* text) {
+              SDL_Init(SDL_INIT_VIDEO);
+
+              SDL_ShowSimpleMessageBox(
+                  SDL_MESSAGEBOX_INFORMATION,
+                  title,
+                  text,
+                  nullptr
+              );
+
+              SDL_Quit();
+          }
+
+          int main(int argc, char* argv[]) {
+              @autoreleasepool {
+
+                  NSArray *paths =
+                      NSSearchPathForDirectoriesInDomains(
+                          NSDocumentDirectory,
+                          NSUserDomainMask,
+                          YES
+                      );
+
+                  NSString *documents =
+                      [paths firstObject];
+
+                  if (!documents) {
+                      return 1;
+                  }
+
+                  std::string docs(
+                      [documents fileSystemRepresentation]
+                  );
+
+                  chdir(docs.c_str());
+
+                  std::string wineZip =
+                      docs + "/Wine.zip";
+
+                  if (!exists(wineZip)) {
+
+                      std::string alternate =
+                          docs + "/Wine-11.0.zip";
+
+                      if (exists(alternate)) {
+                          wineZip = alternate;
+                      }
+                  }
+
+                  std::string gameFolder =
+                      docs + "/postal2";
+
+                  std::string postalExe =
+                      gameFolder +
+                      "/System/Postal2.exe";
+
+                  if (!exists(wineZip)) {
+
+                      showMessage(
+                          "POSTAL 2",
+                          "Нужен файл Wine.zip в папке приложения."
+                      );
+
+                      return 0;
+                  }
+
+                  if (!exists(postalExe)) {
+
+                      showMessage(
+                          "POSTAL 2",
+                          "Перемести папку postal2 в папку приложения через Файлы."
+                      );
+
+                      return 0;
+                  }
+
+                  std::string root =
+                      docs + "/root";
+
+                  mkdir(root.c_str(), 0755);
+
+                  const char* glext =
+                      "GL_EXT_multi_draw_arrays "
+                      "GL_ARB_vertex_program "
+                      "GL_ARB_fragment_program "
+                      "GL_ARB_multitexture "
+                      "GL_EXT_secondary_color "
+                      "GL_EXT_texture_lod_bias "
+                      "GL_NV_texture_env_combine4 "
+                      "GL_ATI_texture_env_combine3 "
+                      "GL_EXT_texture_filter_anisotropic "
+                      "GL_ARB_texture_env_combine "
+                      "GL_EXT_texture_env_combine "
+                      "GL_EXT_texture_compression_s3tc "
+                      "GL_ARB_texture_compression "
+                      "GL_EXT_paletted_texture";
+
+                  std::vector<std::string> strings = {
+
+                      "BoxedWine",
+
+                      "-root",
+                      root,
+
+                      "-zip",
+                      wineZip,
+
+                      "-mount_drive",
+                      gameFolder,
+                      "d",
+
+                      "-fullscreen",
+
+                      "-forceRelativeMouse",
+
+                      "-resolution",
+                      "960x540",
+
+                      "-bpp",
+                      "32",
+
+                      "-vsync",
+                      "1",
+
+                      "-p3",
+
+                      "-glext",
+                      glext,
+
+                      "-title",
+                      "POSTAL 2",
+
+                      "/bin/wine",
+
+                      "d:\\System\\Postal2.exe"
+                  };
+
+                  std::vector<const char*> args;
+
+                  for (auto& s : strings) {
+                      args.push_back(s.c_str());
+                  }
+
+                  return boxedmain(
+                      (int)args.size(),
+                      args.data()
+                  );
+              }
+          }
+          EOF
+
+      # ==========================================================
+      # INFO.PLIST
+      # Documents will be visible in Files.
+      # ==========================================================
+
+      - name: Create Info.plist
+        run: |
+          cat > IOSHost/Info.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+
+          <plist version="1.0">
+          <dict>
+
+              <key>CFBundleDisplayName</key>
+              <string>POSTAL 2</string>
+
+              <key>CFBundleName</key>
+              <string>POSTAL 2</string>
+
+              <key>CFBundleIdentifier</key>
+              <string>com.postal2.boxedwine</string>
+
+              <key>CFBundleExecutable</key>
+              <string>$(EXECUTABLE_NAME)</string>
+
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+
+              <key>CFBundleShortVersionString</key>
+              <string>0.1</string>
+
+              <key>CFBundleVersion</key>
+              <string>1</string>
+
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
+
+              <key>UIFileSharingEnabled</key>
+              <true/>
+
+              <key>LSSupportsOpeningDocumentsInPlace</key>
+              <true/>
+
+              <key>UIRequiresFullScreen</key>
+              <true/>
+
+              <key>UISupportedInterfaceOrientations</key>
+              <array>
+                  <string>UIInterfaceOrientationLandscapeLeft</string>
+                  <string>UIInterfaceOrientationLandscapeRight</string>
+              </array>
+
+              <key>UIApplicationSupportsIndirectInputEvents</key>
+              <true/>
+
+              <key>UILaunchScreen</key>
+              <dict/>
+
+          </dict>
+          </plist>
+          EOF
+
+      # ==========================================================
+      # XCODEGEN PROJECT
+      #
+      # NO BoxedWine UI / Vulkan.
+      # We use SDL + OpenGL ES.
+      # ==========================================================
+
+      - name: Create Xcode project
+        run: |
+          cat > project.yml <<'EOF'
+          name: Postal2BoxedWine
+
+          options:
+            bundleIdPrefix: com.postal2
+            deploymentTarget:
+              iOS: "15.0"
+
+          settings:
+            base:
+              IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+              CLANG_CXX_LANGUAGE_STANDARD: gnu++17
+              CLANG_CXX_LIBRARY: libc++
+              GCC_C_LANGUAGE_STANDARD: gnu11
+              ENABLE_BITCODE: NO
+              DEAD_CODE_STRIPPING: YES
+              ONLY_ACTIVE_ARCH: NO
+
+          targets:
+
+            Postal2BoxedWine:
+
+              type: application
+              platform: iOS
+
+              info:
+                path: IOSHost/Info.plist
+
+              sources:
+
+                - path: IOSHost
+
+                - path: Boxedwine/source
+                  excludes:
+                    - "test/**"
+                    - "ui/**"
+                    - "vulkan/**"
+
+                - path: Boxedwine/platform/sdl
+                  excludes:
+                    - "kvulkanSDL.cpp"
+                    - "kvulkanSDL.h"
+
+              settings:
+
+                base:
+
+                  PRODUCT_BUNDLE_IDENTIFIER:
+                    com.postal2.boxedwine
+
+                  PRODUCT_NAME:
+                    POSTAL2
+
+                  TARGETED_DEVICE_FAMILY:
+                    "1,2"
+
+                  ARCHS:
+                    arm64
+
+                  HEADER_SEARCH_PATHS:
+                    - "$(SRCROOT)/Boxedwine/include"
+                    - "$(SRCROOT)/Boxedwine/source"
+                    - "$(SRCROOT)/Boxedwine/source/**"
+                    - "$(SRCROOT)/Boxedwine/platform/sdl"
+                    - "$(SRCROOT)/SDL2/include"
+                    - "$(SRCROOT)/Vendor/include"
+                    - "$(SRCROOT)/Vendor/include/minizip"
+
+                  LIBRARY_SEARCH_PATHS:
+                    - "$(SRCROOT)/Vendor"
+
+                  GCC_PREPROCESSOR_DEFINITIONS:
+                    - "$(inherited)"
+                    - "BOXEDWINE_64=1"
+                    - "BOXEDWINE_ES=1"
+                    - "BOXEDWINE_OPENGL_SDL=1"
+                    - "BOXEDWINE_ZLIB=1"
+                    - "BOXEDWINE_DISABLE_UI=1"
+                    - "GLH=\\\"SDL_opengles2.h\\\""
+
+                  OTHER_CPLUSPLUSFLAGS:
+                    - "$(inherited)"
+                    - "-Wno-deprecated-declarations"
+                    - "-Wno-unused-variable"
+                    - "-Wno-unused-function"
+                    - "-Wno-unused-private-field"
+                    - "-Wno-c++11-narrowing"
+
+                  OTHER_LDFLAGS:
+                    - "$(inherited)"
+                    - "-lSDL2"
+                    - "-lminizip"
+                    - "-lz"
+                    - "-lc++"
+
+              dependencies:
+
+                - sdk: UIKit.framework
+                - sdk: Foundation.framework
+                - sdk: OpenGLES.framework
+                - sdk: QuartzCore.framework
+                - sdk: AudioToolbox.framework
+                - sdk: AVFoundation.framework
+                - sdk: CoreAudio.framework
+                - sdk: CoreGraphics.framework
+                - sdk: CoreMotion.framework
+                - sdk: GameController.framework
+
+          EOF
+
+          xcodegen generate
+
+          test -d Postal2BoxedWine.xcodeproj
+
+      # ==========================================================
+      # BUILD
+      # ==========================================================
+
+      - name: Build iPhone BoxedWine
+        run: |
+          set -o pipefail
+
+          xcodebuild \
+            -project Postal2BoxedWine.xcodeproj \
+            -scheme Postal2BoxedWine \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build \
+            2>&1 | tee boxedwine-ios-build.log
+
+      # ==========================================================
+      # REAL ERRORS
+      # ==========================================================
+
+      - name: Show real errors
+        if: always()
+        run: |
+          echo
+          echo "======================================"
+          echo "BOXEDWINE IOS REAL ERRORS"
+          echo "======================================"
+
+          if [ -f boxedwine-ios-build.log ]; then
+
+            grep -Ei \
+              "error:|fatal error:|undefined symbols|duplicate symbol|no such file|file not found|cannot find|no such module|architecture|ld:" \
+              boxedwine-ios-build.log \
+              | tail -250 || true
+
+          else
+
+            echo "Build log not created."
+
+          fi
+
+      # ==========================================================
+      # FIND APP
+      # ==========================================================
+
+      - name: Find app
+        run: |
+          set -e
+
+          APP="$(find \
+            build/Build/Products \
+            -type d \
+            -name '*.app' \
+            -path '*Release-iphoneos*' \
+            | head -1)"
+
+          if [ -z "$APP" ]; then
+            echo "ERROR: iPhone app not found"
+            exit 1
+          fi
+
+          echo "APP=$APP" >> "$GITHUB_ENV"
+
+          echo "===== APP ====="
+          echo "$APP"
+
+          du -sh "$APP"
+
+      # ==========================================================
+      # CREATE UNSIGNED IPA
+      # ==========================================================
+
+      - name: Create IPA
+        run: |
+          set -e
+
+          rm -rf Payload
+          mkdir Payload
+
+          cp -R "$APP" Payload/
+
+          /usr/bin/zip \
+            -r \
+            -9 \
+            POSTAL2-BoxedWine-iOS.ipa \
+            Payload
+
+          test -f POSTAL2-BoxedWine-iOS.ipa
+
+          echo "===== IPA ====="
+
+          ls -lh POSTAL2-BoxedWine-iOS.ipa
+
+      # ==========================================================
+      # UPLOAD
+      # ==========================================================
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: POSTAL2-BoxedWine-iOS
+          path: POSTAL2-BoxedWine-iOS.ipa
+          compression-level: 0
+          retention-days: 2
+          if-no-files-found: error
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BoxedWine-iOS-Build-Log
+          path: boxedwine-ios-build.log
+          retention-days: 2
+          if-no-files-found: ignore
