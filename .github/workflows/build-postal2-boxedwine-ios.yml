@@ -13,6 +13,10 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      # ==========================================================
+      # CHECKOUT
+      # ==========================================================
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -59,7 +63,7 @@ jobs:
           test -f source/sdl/main.cpp
 
       # ==========================================================
-      # BHASHTABLE APPLE CLANG FIX
+      # BHASHTABLE FIX
       # ==========================================================
 
       - name: Patch BHashTable for Apple Clang
@@ -83,7 +87,7 @@ jobs:
 
               if marker not in s:
                   raise SystemExit(
-                      "Could not find BHashTable iterator block"
+                      "Could not find BHashTable iterator"
                   )
 
               replacement = """struct iterator : public const_iterator {
@@ -99,12 +103,10 @@ jobs:
 
               p.write_text(s)
 
-              print(
-                  "BHashTable patched for Apple Clang"
-              )
+              print("BHashTable patched")
           PY
 
-          echo "===== BHASHTABLE PATCH ====="
+          echo "===== BHASHTABLE ====="
 
           grep -n -A12 \
             "struct iterator : public const_iterator" \
@@ -112,10 +114,7 @@ jobs:
             | head -20
 
       # ==========================================================
-      # SIMDE
-      #
-      # IMPORTANT:
-      # use stable v0.8.2 instead of latest master
+      # SIMDE STABLE
       # ==========================================================
 
       - name: Clone stable SIMDe
@@ -130,30 +129,150 @@ jobs:
             https://github.com/simd-everywhere/simde.git \
             SIMDe
 
-          echo "===== SIMDE VERSION ====="
+          echo "===== SIMDE ====="
 
           cd SIMDe
-
-          git describe \
-            --tags \
-            --always
-
+          git describe --tags --always
           cd ..
 
-          test -f \
-            SIMDe/simde/x86/sse.h
+          test -f SIMDe/simde/x86/sse.h
+          test -f SIMDe/simde/x86/sse2.h
 
-          test -f \
-            SIMDe/simde/x86/sse2.h
+      # ==========================================================
+      # FIX THE EXACT XCODE 26 SSE2 ERROR
+      #
+      # Disables broken:
+      # __builtin_shufflevector
+      # __builtin_convertvector
+      #
+      # ONLY inside simde_mm_cvtpd_ps.
+      #
+      # Then SIMDe uses its own scalar fallback.
+      # ==========================================================
 
-          test -f \
-            SIMDe/simde/simde-common.h
+      - name: Patch SIMDe SSE2 for Xcode 26
+        run: |
+          set -e
 
-          echo "===== SIMDE FILES ====="
+          python3 - <<'PY'
+          from pathlib import Path
 
-          ls -lh \
-            SIMDe/simde/x86/sse.h \
-            SIMDe/simde/x86/sse2.h
+          p = Path("SIMDe/simde/x86/sse2.h")
+
+          if not p.exists():
+              raise SystemExit("sse2.h not found")
+
+          text = p.read_text()
+
+          function_name = "simde_mm_cvtpd_ps"
+
+          start = text.find(function_name)
+
+          if start == -1:
+              raise SystemExit(
+                  "simde_mm_cvtpd_ps not found"
+              )
+
+          end_marker = (
+              "#if defined("
+              "SIMDE_X86_SSE2_ENABLE_NATIVE_ALIASES"
+              ")"
+          )
+
+          end = text.find(
+              end_marker,
+              start
+          )
+
+          if end == -1:
+              raise SystemExit(
+                  "Could not find end of simde_mm_cvtpd_ps"
+              )
+
+          block = text[start:end]
+
+          broken = (
+              "#elif HEDLEY_HAS_BUILTIN("
+              "__builtin_shufflevector"
+              ") && HEDLEY_HAS_BUILTIN("
+              "__builtin_convertvector"
+              ")"
+          )
+
+          fixed = (
+              "#elif 0 "
+              "/* iOS Xcode 26: "
+              "force scalar fallback */"
+          )
+
+          if fixed in block:
+              print(
+                  "SIMDe SSE2 patch already applied"
+              )
+
+          elif broken in block:
+
+              block = block.replace(
+                  broken,
+                  fixed,
+                  1
+              )
+
+              text = (
+                  text[:start] +
+                  block +
+                  text[end:]
+              )
+
+              p.write_text(text)
+
+              print(
+                  "SIMDe SSE2 Xcode 26 patch applied"
+              )
+
+          else:
+              raise SystemExit(
+                  "Broken shufflevector branch not found"
+              )
+          PY
+
+          echo "===== SIMDE PATCH RESULT ====="
+
+          grep -n -A38 \
+            "simde_mm_cvtpd_ps" \
+            SIMDe/simde/x86/sse2.h \
+            | head -45
+
+          echo
+          echo "===== VERIFY BROKEN BRANCH DISABLED ====="
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          text = Path(
+              "SIMDe/simde/x86/sse2.h"
+          ).read_text()
+
+          start = text.find(
+              "simde_mm_cvtpd_ps"
+          )
+
+          end = text.find(
+              "#if defined(SIMDE_X86_SSE2_ENABLE_NATIVE_ALIASES)",
+              start
+          )
+
+          block = text[start:end]
+
+          if "iOS Xcode 26: force scalar fallback" not in block:
+              raise SystemExit(
+                  "ERROR: patch verification failed"
+              )
+
+          print(
+              "OK: scalar fallback forced"
+          )
+          PY
 
       # ==========================================================
       # SDL2
@@ -202,8 +321,11 @@ jobs:
             | head -1)"
 
           if [ -z "$SDL_LIB" ]; then
+
               echo "ERROR: libSDL2.a not found"
+
               exit 1
+
           fi
 
           mkdir -p \
@@ -281,22 +403,20 @@ jobs:
 
           echo "===== MINIZIP ====="
 
-          file \
-            Vendor/libminizip.a
-
-          ls -lh \
-            Vendor/libminizip.a
+          file Vendor/libminizip.a
+          ls -lh Vendor/libminizip.a
 
       # ==========================================================
       # IPHONE LAUNCHER
       #
-      # Later:
+      # Documents:
       #
-      # Documents/
-      #   Wine.zip
-      #   postal2/
-      #     System/
-      #       Postal2.exe
+      # Wine.zip
+      #
+      # postal2/
+      #   System/
+      #     Postal2.exe
+      #
       # ==========================================================
 
       - name: Create iPhone launcher
@@ -370,7 +490,8 @@ jobs:
                   }
 
                   std::string docs(
-                      [documents fileSystemRepresentation]
+                      [documents
+                          fileSystemRepresentation]
                   );
 
                   chdir(
@@ -383,16 +504,26 @@ jobs:
                   if (!exists(wineZip)) {
 
                       std::vector<std::string> wines = {
+
                           docs + "/Wine-5.0.zip",
+
                           docs + "/Wine-7.0.zip",
+
                           docs + "/Wine-9.0.zip",
+
                           docs + "/Wine-11.0.zip"
                       };
 
-                      for (const auto& w : wines) {
+                      for (
+                          const auto& candidate :
+                          wines
+                      ) {
 
-                          if (exists(w)) {
-                              wineZip = w;
+                          if (exists(candidate)) {
+
+                              wineZip =
+                                  candidate;
+
                               break;
                           }
                       }
@@ -489,8 +620,10 @@ jobs:
                   std::vector<const char*> args;
 
                   for (
-                      auto& value : values
+                      auto& value :
+                      values
                   ) {
+
                       args.push_back(
                           value.c_str()
                       );
@@ -539,10 +672,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>0.5</string>
+              <string>0.6</string>
 
               <key>CFBundleVersion</key>
-              <string>5</string>
+              <string>6</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -587,10 +720,6 @@ jobs:
 
       # ==========================================================
       # XCODE PROJECT
-      #
-      # C++20
-      # Stable SIMDe
-      # Vector builtins disabled
       # ==========================================================
 
       - name: Create Xcode project
@@ -714,17 +843,9 @@ jobs:
 
                     - "BOXEDWINE_DISABLE_UI=1"
 
-                    # ============================================
-                    # SIMDE APPLE CLANG FIX
-                    # ============================================
-
                     - "SIMDE_NO_NATIVE=1"
 
                     - "SIMDE_NO_VECTOR=1"
-
-                    - "SIMDE_NO_SHUFFLE_VECTOR=1"
-
-                    - "SIMDE_NO_CONVERT_VECTOR=1"
 
                     - "SIMDE_NO_CHECK_IMMEDIATE_CONSTANT=1"
 
@@ -736,16 +857,6 @@ jobs:
 
                     - "-Wno-error"
 
-                    - "-DSIMDE_NO_NATIVE"
-
-                    - "-DSIMDE_NO_VECTOR"
-
-                    - "-DSIMDE_NO_SHUFFLE_VECTOR"
-
-                    - "-DSIMDE_NO_CONVERT_VECTOR"
-
-                    - "-DSIMDE_NO_CHECK_IMMEDIATE_CONSTANT"
-
                   OTHER_CPLUSPLUSFLAGS:
 
                     - "$(inherited)"
@@ -753,16 +864,6 @@ jobs:
                     - "-std=gnu++20"
 
                     - "-Wno-error"
-
-                    - "-DSIMDE_NO_NATIVE"
-
-                    - "-DSIMDE_NO_VECTOR"
-
-                    - "-DSIMDE_NO_SHUFFLE_VECTOR"
-
-                    - "-DSIMDE_NO_CONVERT_VECTOR"
-
-                    - "-DSIMDE_NO_CHECK_IMMEDIATE_CONSTANT"
 
                     - "-Wno-deprecated-declarations"
 
@@ -825,14 +926,14 @@ jobs:
           test -d \
             Postal2BoxedWine.xcodeproj
 
-          echo "===== BUILD SETTINGS ====="
+          echo "===== SETTINGS ====="
 
           xcodebuild \
             -project Postal2BoxedWine.xcodeproj \
             -scheme Postal2BoxedWine \
             -showBuildSettings \
             | grep -E \
-            "CLANG_CXX_LANGUAGE_STANDARD|HEADER_SEARCH_PATHS|SIMDE" \
+            "CLANG_CXX_LANGUAGE_STANDARD|HEADER_SEARCH_PATHS" \
             || true
 
       # ==========================================================
@@ -862,7 +963,6 @@ jobs:
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
             CLANG_CXX_LANGUAGE_STANDARD=gnu++20 \
-            GCC_PREPROCESSOR_DEFINITIONS='$(inherited) BOXEDWINE_64=1 BOXEDWINE_ES=1 BOXEDWINE_OPENGL_SDL=1 BOXEDWINE_ZLIB=1 BOXEDWINE_DISABLE_UI=1 SIMDE_NO_NATIVE=1 SIMDE_NO_VECTOR=1 SIMDE_NO_SHUFFLE_VECTOR=1 SIMDE_NO_CONVERT_VECTOR=1 SIMDE_NO_CHECK_IMMEDIATE_CONSTANT=1 GLH=<SDL_opengles2.h>' \
             build \
             2>&1 | tee boxedwine-ios-build.log
 
@@ -930,7 +1030,7 @@ jobs:
           du -sh "$APP"
 
       # ==========================================================
-      # CREATE IPA
+      # IPA
       # ==========================================================
 
       - name: Create IPA
@@ -978,6 +1078,7 @@ jobs:
           TAG="postal2-ios-${GITHUB_RUN_NUMBER}"
 
           echo "===== RELEASE ====="
+
           echo "$TAG"
 
           gh release create \
