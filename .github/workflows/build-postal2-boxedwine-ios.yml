@@ -13,8 +13,16 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      # ==========================================================
+      # CHECKOUT
+      # ==========================================================
+
       - name: Checkout
         uses: actions/checkout@v4
+
+      # ==========================================================
+      # TOOLS
+      # ==========================================================
 
       - name: Install tools
         run: |
@@ -30,6 +38,10 @@ jobs:
 
           echo "===== IPHONE SDK ====="
           xcrun --sdk iphoneos --show-sdk-version
+
+      # ==========================================================
+      # BOXEDWINE
+      # ==========================================================
 
       - name: Clone BoxedWine
         run: |
@@ -49,6 +61,10 @@ jobs:
 
           test -d source
           test -f source/sdl/main.cpp
+
+      # ==========================================================
+      # SDL2
+      # ==========================================================
 
       - name: Clone SDL2
         run: |
@@ -99,11 +115,21 @@ jobs:
 
           mkdir -p "$GITHUB_WORKSPACE/Vendor"
 
-          cp "$SDL_LIB" \
+          cp \
+            "$SDL_LIB" \
             "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
+
+          echo "===== SDL2 ====="
 
           file \
             "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
+
+          ls -lh \
+            "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
+
+      # ==========================================================
+      # MINIZIP
+      # ==========================================================
 
       - name: Clone zlib
         run: |
@@ -118,7 +144,8 @@ jobs:
 
           mkdir -p Vendor/include/minizip
 
-          cp zlib-src/contrib/minizip/*.h \
+          cp \
+            zlib-src/contrib/minizip/*.h \
             Vendor/include/minizip/
 
       - name: Build minizip
@@ -129,7 +156,7 @@ jobs:
           CC="$(xcrun --sdk iphoneos -f clang)"
 
           rm -rf minizip-build
-          mkdir minizip-build
+          mkdir -p minizip-build
 
           for SRC in \
             ioapi.c \
@@ -147,8 +174,7 @@ jobs:
               -Izlib-src \
               -Izlib-src/contrib/minizip \
               "zlib-src/contrib/minizip/$SRC" \
-              -o \
-              "minizip-build/${SRC%.c}.o"
+              -o "minizip-build/${SRC%.c}.o"
 
           done
 
@@ -157,7 +183,20 @@ jobs:
             -o Vendor/libminizip.a \
             minizip-build/*.o
 
+          echo "===== MINIZIP ====="
+
           file Vendor/libminizip.a
+          ls -lh Vendor/libminizip.a
+
+      # ==========================================================
+      # IPHONE LAUNCHER
+      #
+      # Documents:
+      #
+      # Wine.zip
+      # postal2/System/Postal2.exe
+      #
+      # ==========================================================
 
       - name: Create iPhone launcher
         run: |
@@ -184,6 +223,7 @@ jobs:
               const std::string& path
           ) {
               struct stat st {};
+
               return stat(
                   path.c_str(),
                   &st
@@ -229,8 +269,7 @@ jobs:
                   }
 
                   std::string docs(
-                      [documents
-                          fileSystemRepresentation]
+                      [documents fileSystemRepresentation]
                   );
 
                   chdir(
@@ -242,12 +281,11 @@ jobs:
 
                   if (!exists(wineZip)) {
 
-                      std::string alt =
-                          docs +
-                          "/Wine-5.0.zip";
+                      std::string wineAlt =
+                          docs + "/Wine-5.0.zip";
 
-                      if (exists(alt)) {
-                          wineZip = alt;
+                      if (exists(wineAlt)) {
+                          wineZip = wineAlt;
                       }
                   }
 
@@ -262,7 +300,7 @@ jobs:
 
                       message(
                           "POSTAL 2",
-                          "Положи Wine.zip в папку POSTAL 2 через приложение Файлы."
+                          "Положи Wine.zip в папку приложения через Файлы."
                       );
 
                       return 0;
@@ -299,7 +337,7 @@ jobs:
                       "GL_EXT_texture_compression_s3tc "
                       "GL_ARB_texture_compression";
 
-                  std::vector<std::string> s = {
+                  std::vector<std::string> values = {
 
                       "BoxedWine",
 
@@ -339,26 +377,32 @@ jobs:
                       "d:\\System\\Postal2.exe"
                   };
 
-                  std::vector<const char*> a;
+                  std::vector<const char*> args;
 
                   for (
-                      auto& value : s
+                      auto& value : values
                   ) {
-                      a.push_back(
+                      args.push_back(
                           value.c_str()
                       );
                   }
 
                   return boxedmain(
-                      (int)a.size(),
-                      a.data()
+                      (int)args.size(),
+                      args.data()
                   );
               }
           }
           EOF
 
+      # ==========================================================
+      # INFO.PLIST
+      # ==========================================================
+
       - name: Create Info plist
         run: |
+          mkdir -p IOSHost
+
           cat > IOSHost/Info.plist <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
 
@@ -431,6 +475,10 @@ jobs:
 
           </plist>
           EOF
+
+      # ==========================================================
+      # XCODE PROJECT
+      # ==========================================================
 
       - name: Create Xcode project
         run: |
@@ -626,18 +674,26 @@ jobs:
           test -d \
             Postal2BoxedWine.xcodeproj
 
+      # ==========================================================
+      # BUILD
+      #
+      # IMPORTANT:
+      # -quiet hides thousands of successful CompileC lines.
+      #
+      # If Xcode fails, this step should show the actual errors.
+      # ==========================================================
+
       - name: Build iPhone BoxedWine
-        id: boxedwine_build
         shell: bash
         run: |
           set +e
           set -o pipefail
 
           rm -f \
-            boxedwine-ios-build.log \
-            boxedwine-errors.txt
+            boxedwine-ios-build.log
 
           xcodebuild \
+            -quiet \
             -project Postal2BoxedWine.xcodeproj \
             -scheme Postal2BoxedWine \
             -configuration Release \
@@ -648,62 +704,43 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
+            COMPILER_INDEX_STORE_ENABLE=NO \
             build \
             2>&1 | tee boxedwine-ios-build.log
 
           STATUS=${PIPESTATUS[0]}
 
           echo
-          echo "===== BUILD STATUS: $STATUS ====="
+          echo "======================================"
+          echo "REAL BOXEDWINE ERRORS"
+          echo "======================================"
 
           grep -Ei \
-            "(^| )error:|fatal error:|undefined symbols|duplicate symbol|no such file|file not found|cannot find|no such module|unsupported|architecture|ld:" \
+            "error:|fatal error:|undefined symbols|duplicate symbol|file not found|no such file|cannot find|no such module|unsupported|architecture|ld:" \
             boxedwine-ios-build.log \
-            > boxedwine-errors.txt \
             || true
 
-          {
-            echo "# POSTAL 2 iOS Build"
+          echo
+          echo "======================================"
+          echo "BUILD STATUS: $STATUS"
+          echo "======================================"
+
+          if [ "$STATUS" != "0" ]; then
 
             echo
+            echo "===== LAST 120 LINES ====="
 
-            if [ "$STATUS" = "0" ]; then
+            tail -120 \
+              boxedwine-ios-build.log \
+              || true
 
-              echo "## ✅ BOXEDWINE COMPILED"
-
-            else
-
-              echo "## ❌ REAL COMPILER ERRORS"
-
-              echo
-
-              echo '```text'
-
-              if [ -s boxedwine-errors.txt ]; then
-
-                tail -120 \
-                  boxedwine-errors.txt
-
-              else
-
-                echo "GitHub did not find a normal error line."
-
-                echo
-
-                echo "Last 100 lines:"
-
-                tail -100 \
-                  boxedwine-ios-build.log
-
-              fi
-
-              echo '```'
-
-            fi
-
-          } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           exit "$STATUS"
+
+      # ==========================================================
+      # FIND APP
+      # ==========================================================
 
       - name: Find app
         if: success()
@@ -734,6 +771,10 @@ jobs:
 
           du -sh "$APP"
 
+      # ==========================================================
+      # IPA
+      # ==========================================================
+
       - name: Create IPA
         if: success()
         run: |
@@ -761,11 +802,16 @@ jobs:
           ls -lh \
             POSTAL2-BoxedWine-iOS.ipa
 
-      # We use GitHub Releases instead of Actions Artifacts.
-      # Your Actions artifact quota is currently full.
+      # ==========================================================
+      # RELEASE
+      #
+      # We do NOT use actions/upload-artifact.
+      # Your artifact quota was full.
+      # ==========================================================
 
       - name: Publish IPA to Releases
         if: success()
+
         env:
 
           GH_TOKEN:
@@ -776,14 +822,8 @@ jobs:
 
           TAG="postal2-ios-${GITHUB_RUN_NUMBER}"
 
-          echo "TAG=$TAG"
-
-          gh release delete \
-            "$TAG" \
-            --yes \
-            --cleanup-tag \
-            2>/dev/null \
-            || true
+          echo "===== RELEASE ====="
+          echo "$TAG"
 
           gh release create \
             "$TAG" \
@@ -794,9 +834,9 @@ jobs:
 
           {
             echo
-            echo "## ✅ IPA READY"
+            echo "# ✅ POSTAL 2 IPA READY"
             echo
-            echo "Открой вкладку Releases этого репозитория."
+            echo "Открой Releases этого репозитория."
             echo
             echo "Скачай POSTAL2-BoxedWine-iOS.ipa"
           } >> "$GITHUB_STEP_SUMMARY"
