@@ -57,38 +57,21 @@ jobs:
           echo "===== BOXEDWINE ====="
 
           cd Boxedwine
-
           git rev-parse HEAD
-
           cd ..
 
           test -d Boxedwine/source
           test -d Boxedwine/platform/sdl
 
-          test -f \
-            Boxedwine/source/sdl/main.cpp
-
-          test -f \
-            Boxedwine/source/opengl/glcommon.h
-
-          test -f \
-            Boxedwine/source/opengl/glfunctions.h
-
-          test -f \
-            Boxedwine/source/opengl/glfunctions_ext.h
-
-          test -f \
-            Boxedwine/source/opengl/sdl/sdlgl.cpp
-
-          test -f \
-            Boxedwine/source/opengl/es/esopengl.c
+          test -f Boxedwine/source/sdl/main.cpp
+          test -f Boxedwine/source/opengl/glcommon.h
+          test -f Boxedwine/source/opengl/glfunctions.h
+          test -f Boxedwine/source/opengl/glfunctions_ext.h
+          test -f Boxedwine/source/opengl/sdl/sdlgl.cpp
+          test -f Boxedwine/source/opengl/es/esopengl.c
 
       # ==========================================================
       # BHASHTABLE
-      #
-      # Previous Apple Clang fix:
-      # owner
-      # slot_index
       # ==========================================================
 
       - name: Patch BHashTable
@@ -147,19 +130,14 @@ jobs:
             https://github.com/simd-everywhere/simde.git \
             SIMDe
 
-          test -f \
-            SIMDe/simde/x86/sse.h
-
-          test -f \
-            SIMDe/simde/x86/sse2.h
+          test -f SIMDe/simde/x86/sse.h
+          test -f SIMDe/simde/x86/sse2.h
 
           echo "===== SIMDE ====="
 
           cd SIMDe
-
-          git describe \
-            --tags \
-            --always
+          git describe --tags --always
+          cd ..
 
       # ==========================================================
       # SIMDE XCODE FIX
@@ -255,11 +233,8 @@ jobs:
             https://github.com/libsdl-org/SDL.git \
             SDL2
 
-          test -d \
-            SDL2/include
-
-          test -d \
-            SDL2/Xcode/SDL
+          test -d SDL2/include
+          test -d SDL2/Xcode/SDL
 
       - name: Build SDL2 for iPhone
         run: |
@@ -295,8 +270,7 @@ jobs:
               exit 1
           fi
 
-          mkdir -p \
-            "$GITHUB_WORKSPACE/Vendor"
+          mkdir -p "$GITHUB_WORKSPACE/Vendor"
 
           cp \
             "$SDL_LIB" \
@@ -308,18 +282,10 @@ jobs:
             "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
 
       # ==========================================================
-      # COMPLETE OPENGL TYPE COMPATIBILITY
+      # OPENGL COMPATIBILITY HEADERS
       #
-      # IMPORTANT:
-      #
-      # We DO NOT define GLdouble / GLhandleARB /
-      # GLcharARB / GLintptrARB etc one by one anymore.
-      #
-      # GLES2 = real iPhone renderer
-      #
-      # Khronos desktop glext.h =
-      # compatibility declarations/types/enums expected by
-      # BoxedWine's desktop OpenGL interface.
+      # FIXED:
+      # khrplatform.h comes from EGL-Registry.
       # ==========================================================
 
       - name: Create complete OpenGL compatibility headers
@@ -332,6 +298,8 @@ jobs:
             IOSCompat/GL \
             IOSCompat/KHR
 
+          echo "===== DOWNLOAD GL/glext.h ====="
+
           curl \
             --fail \
             --location \
@@ -339,27 +307,33 @@ jobs:
             https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/main/api/GL/glext.h \
             -o IOSCompat/GL/glext.h
 
+          echo "===== DOWNLOAD KHR/khrplatform.h ====="
+
           curl \
             --fail \
             --location \
             --retry 3 \
-            https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/main/api/KHR/khrplatform.h \
+            https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/main/api/KHR/khrplatform.h \
             -o IOSCompat/KHR/khrplatform.h
+
+          test -s \
+            IOSCompat/GL/glext.h
+
+          test -s \
+            IOSCompat/KHR/khrplatform.h
 
           cat > IOSCompat/IOSGLCompat.h <<'EOF'
           #ifndef BOXEDWINE_IOS_GL_COMPAT_H
           #define BOXEDWINE_IOS_GL_COMPAT_H
 
           /*
-           * Actual renderer on iPhone.
+           * Real iPhone OpenGL ES types/API.
            */
           #include <SDL_opengles2.h>
 
           /*
-           * Desktop OpenGL types which GLES2 intentionally
-           * does not provide.
+           * Desktop OpenGL types which GLES does not provide.
            */
-
           #ifndef GLdouble
           typedef double GLdouble;
           #endif
@@ -369,49 +343,32 @@ jobs:
           #endif
 
           /*
-           * Khronos compatibility extension declarations.
-           *
-           * This supplies types such as:
-           *
-           * GLhandleARB
-           * GLcharARB
-           * GLintptrARB
-           * GLsizeiptrARB
-           * GLhalfARB
-           * GLhalfNV
-           * GLint64
-           * GLuint64
-           * GLsync
-           * GLvdpauSurfaceNV
-           * plus the ARB/EXT constants BoxedWine expects.
-           *
-           * We DO NOT enable GL_GLEXT_PROTOTYPES.
-           * Therefore these are declarations/types only.
-           * The actual renderer stays OpenGL ES.
+           * Khronos desktop extension types/enums.
            */
-
           #include <GL/glext.h>
 
           #endif
           EOF
 
-          echo "===== GL COMPAT HEADER ====="
+          echo
+          echo "===== DOWNLOADS OK ====="
 
-          head -60 \
+          ls -lh \
+            IOSCompat/GL/glext.h \
+            IOSCompat/KHR/khrplatform.h \
             IOSCompat/IOSGLCompat.h
 
+          echo
           echo "===== VERIFY GLhandleARB ====="
 
           grep -n \
             "GLhandleARB" \
             IOSCompat/GL/glext.h \
-            | head
+            | head \
+            || true
 
       # ==========================================================
-      # TEST COMPAT HEADER BEFORE BUILDING BOXEDWINE
-      #
-      # If this step passes we know all important desktop
-      # OpenGL types exist before starting the large build.
+      # TEST OPENGL HEADER BEFORE FULL BUILD
       # ==========================================================
 
       - name: Test OpenGL compatibility header
@@ -424,7 +381,7 @@ jobs:
           GLdouble test_double = 0.0;
           GLclampd test_clamp = 0.0;
 
-          GLhandleARB test_handle = nullptr;
+          GLhandleARB test_handle = 0;
           GLcharARB test_char = 0;
 
           GLintptrARB test_ptr = 0;
@@ -434,15 +391,17 @@ jobs:
           GLhalfNV test_half_nv = 0;
 
           int main() {
-              return
-                  (int)test_double +
-                  (int)test_clamp +
-                  (int)test_char +
-                  (int)test_ptr +
-                  (int)test_size +
-                  (int)test_half +
-                  (int)test_half_nv +
-                  (test_handle != nullptr);
+
+              (void)test_double;
+              (void)test_clamp;
+              (void)test_handle;
+              (void)test_char;
+              (void)test_ptr;
+              (void)test_size;
+              (void)test_half;
+              (void)test_half_nv;
+
+              return 0;
           }
           EOF
 
@@ -475,11 +434,6 @@ jobs:
 
       # ==========================================================
       # PATCH GLCOMMON
-      #
-      # This makes the compatibility header visible BEFORE
-      # BoxedWine expands glfunctions.h / glfunctions_ext.h.
-      #
-      # This is the important systematic fix.
       # ==========================================================
 
       - name: Patch BoxedWine GL common header
@@ -504,10 +458,7 @@ jobs:
           #endif
           """
 
-          if (
-              "#include <IOSGLCompat.h>"
-              not in text
-          ):
+          if "#include <IOSGLCompat.h>" not in text:
 
               if marker not in text:
                   raise SystemExit(
@@ -527,11 +478,11 @@ jobs:
           )
           PY
 
-          sed -n '18,42p' \
+          sed -n '18,45p' \
             Boxedwine/source/opengl/glcommon.h
 
       # ==========================================================
-      # SDL OPENGL -> IPHONE OPENGL ES
+      # SDL OPENGL -> IPHONE GLES
       # ==========================================================
 
       - name: Patch SDL OpenGL for iPhone
@@ -547,25 +498,13 @@ jobs:
 
           text = path.read_text()
 
-          # ------------------------------------------------------
-          # iOS is __APPLE__, but BoxedWine's __APPLE__ code
-          # here is macOS/CGL specific.
-          # ------------------------------------------------------
-
+          # iOS also defines __APPLE__, but CGL is macOS only.
           text = text.replace(
               "#ifdef __APPLE__",
               "#if defined(__APPLE__) && TARGET_OS_OSX"
           )
 
-          # ------------------------------------------------------
-          # Add TargetConditionals AFTER replacing old Apple
-          # checks so this new block still works on iPhone.
-          # ------------------------------------------------------
-
-          if (
-              "#include <TargetConditionals.h>"
-              not in text
-          ):
+          if "#include <TargetConditionals.h>" not in text:
 
               marker = '#include "boxedwine.h"\n'
 
@@ -587,19 +526,10 @@ jobs:
                   1
               )
 
-          # ------------------------------------------------------
-          # Replace desktop SDL OpenGL declarations with our
-          # compatibility header.
-          # ------------------------------------------------------
-
           text = text.replace(
               "#include <SDL_opengl.h>",
               "#include <IOSGLCompat.h>"
           )
-
-          # ------------------------------------------------------
-          # Force SDL to create a GLES2 context.
-          # ------------------------------------------------------
 
           reset = (
               "    SDL_GL_ResetAttributes();"
@@ -624,10 +554,7 @@ jobs:
               );
           #endif"""
 
-          if (
-              "SDL_GL_CONTEXT_PROFILE_ES"
-              not in text
-          ):
+          if "SDL_GL_CONTEXT_PROFILE_ES" not in text:
 
               if reset not in text:
                   raise SystemExit(
@@ -640,50 +567,6 @@ jobs:
                   1
               )
 
-          # ------------------------------------------------------
-          # Desktop code tries to replace the profile with
-          # OpenGL Core. Do not do that on GLES.
-          # ------------------------------------------------------
-
-          old_major = """    if (major) {
-                  if (major >= 3) {
-                      SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-                  }
-                  //#ifdef BOXEDWINE_MSVC
-                  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, major);
-                  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
-                  //#endif
-              }"""
-
-          new_major = """#ifndef BOXEDWINE_ES
-              if (major) {
-                  if (major >= 3) {
-                      SDL_GL_SetAttribute(
-                          SDL_GL_CONTEXT_PROFILE_MASK,
-                          SDL_GL_CONTEXT_PROFILE_CORE
-                      );
-                  }
-
-                  SDL_GL_SetAttribute(
-                      SDL_GL_CONTEXT_MAJOR_VERSION,
-                      major
-                  );
-
-                  SDL_GL_SetAttribute(
-                      SDL_GL_CONTEXT_MINOR_VERSION,
-                      minor
-                  );
-              }
-          #endif"""
-
-          if old_major in text:
-
-              text = text.replace(
-                  old_major,
-                  new_major,
-                  1
-              )
-
           path.write_text(text)
 
           print(
@@ -691,20 +574,13 @@ jobs:
           )
           PY
 
-          echo "===== SDLGL HEADER ====="
+          echo "===== SDLGL TOP ====="
 
-          sed -n '17,50p' \
-            Boxedwine/source/opengl/sdl/sdlgl.cpp
-
-          echo "===== SDLGL CONTEXT ====="
-
-          sed -n '82,125p' \
+          sed -n '17,60p' \
             Boxedwine/source/opengl/sdl/sdlgl.cpp
 
       # ==========================================================
-      # DUPLICATE MAIN
-      #
-      # We provide our own iPhone main.mm.
+      # DISABLE DEFAULT MAIN
       # ==========================================================
 
       - name: Disable BoxedWine default main
@@ -792,7 +668,6 @@ jobs:
           )"
 
           rm -rf minizip-build
-
           mkdir -p minizip-build
 
           for SRC in \
@@ -840,7 +715,6 @@ jobs:
           #import <Foundation/Foundation.h>
 
           #include <SDL.h>
-
           #include <sys/stat.h>
           #include <unistd.h>
 
@@ -976,11 +850,6 @@ jobs:
                       0755
                   );
 
-                  /*
-                   * BoxedWine's own commandLine.txt recommends
-                   * this limited extension set for old Unreal
-                   * engine games.
-                   */
                   const char* extensions =
                       "GL_EXT_multi_draw_arrays "
                       "GL_ARB_vertex_program "
@@ -1043,6 +912,7 @@ jobs:
                       auto& value :
                       values
                   ) {
+
                       args.push_back(
                           value.c_str()
                       );
@@ -1091,10 +961,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>0.9</string>
+              <string>1.0</string>
 
               <key>CFBundleVersion</key>
-              <string>9</string>
+              <string>10</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -1274,8 +1144,6 @@ jobs:
                     - "BOXEDWINE_OPENGL=1"
 
                     - "BOXEDWINE_OPENGL_SDL=1"
-
-                    - "BOXEDWINE_OPENGL_ES=1"
 
                     - "BOXEDWINE_ES=1"
 
@@ -1516,7 +1384,6 @@ jobs:
         if: success()
 
         env:
-
           GH_TOKEN:
             ${{ github.token }}
 
