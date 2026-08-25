@@ -13,10 +13,6 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      # ==========================================================
-      # CHECKOUT
-      # ==========================================================
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -56,7 +52,7 @@ jobs:
 
           cd Boxedwine
 
-          echo "===== BOXEDWINE ====="
+          echo "===== BOXEDWINE COMMIT ====="
           git rev-parse HEAD
 
           test -d source
@@ -64,12 +60,10 @@ jobs:
           test -f source/sdl/main.cpp
           test -f source/opengl/sdl/sdlgl.cpp
           test -f source/opengl/es/esopengl.c
+          test -f source/opengl/es/esopengl.h
 
       # ==========================================================
-      # BHASHTABLE FIX
-      # fixes:
-      # owner
-      # slot_index
+      # FIX BHASHTABLE
       # ==========================================================
 
       - name: Patch BHashTable
@@ -87,7 +81,6 @@ jobs:
           s = p.read_text()
 
           if "using const_iterator::owner;" not in s:
-
               marker = "struct iterator : public const_iterator {"
 
               if marker not in s:
@@ -114,7 +107,7 @@ jobs:
           grep -n -A10 \
             "struct iterator : public const_iterator" \
             Boxedwine/source/util/bhashtable.h \
-            | head -15
+            | head -20
 
       # ==========================================================
       # SIMDE
@@ -142,7 +135,7 @@ jobs:
           cd ..
 
       # ==========================================================
-      # SIMDE XCODE 26 FIX
+      # FIX SIMDE XCODE 26
       # ==========================================================
 
       - name: Patch SIMDe SSE2
@@ -162,7 +155,9 @@ jobs:
           start = text.find("simde_mm_cvtpd_ps")
 
           if start == -1:
-              raise SystemExit("simde_mm_cvtpd_ps not found")
+              raise SystemExit(
+                  "simde_mm_cvtpd_ps not found"
+              )
 
           end = text.find(
               "#if defined(SIMDE_X86_SSE2_ENABLE_NATIVE_ALIASES)",
@@ -186,14 +181,13 @@ jobs:
 
           fixed = (
               "#elif 0 "
-              "/* iOS: force scalar fallback */"
+              "/* iOS Xcode: force scalar fallback */"
           )
 
           if fixed in block:
               print("SIMDe patch already applied")
 
           elif broken in block:
-
               block = block.replace(
                   broken,
                   fixed,
@@ -201,9 +195,9 @@ jobs:
               )
 
               text = (
-                  text[:start] +
-                  block +
-                  text[end:]
+                  text[:start]
+                  + block
+                  + text[end:]
               )
 
               p.write_text(text)
@@ -212,16 +206,12 @@ jobs:
 
           else:
               raise SystemExit(
-                  "SIMDe broken branch not found"
+                  "SIMDe shufflevector branch not found"
               )
           PY
 
       # ==========================================================
-      # IOS OPENGL ES PATCH
-      #
-      # IMPORTANT:
-      # iOS is __APPLE__, but it is NOT macOS.
-      # BoxedWine desktop source otherwise tries to use CGL.
+      # PATCH OPENGL FOR IOS
       # ==========================================================
 
       - name: Patch BoxedWine OpenGL for iOS
@@ -240,10 +230,9 @@ jobs:
 
           s = p.read_text()
 
-          # ------------------------------------------------------
-          # Desktop OpenGL header -> OpenGL ES header when
-          # BOXEDWINE_ES is enabled.
-          # ------------------------------------------------------
+          # -----------------------------------------------
+          # Use GLES2 headers on iOS.
+          # -----------------------------------------------
 
           old_include = "#include <SDL_opengl.h>"
 
@@ -260,72 +249,50 @@ jobs:
                   1
               )
 
-          # ------------------------------------------------------
-          # __APPLE__ includes both macOS AND iOS.
-          # BoxedWine's macOpenGL uses CGL and must only compile
-          # on actual macOS.
-          # ------------------------------------------------------
+          # -----------------------------------------------
+          # All original __APPLE__ paths in this file are
+          # macOS/CGL-specific. They must not run on iOS.
+          # -----------------------------------------------
 
           s = s.replace(
               "#ifdef __APPLE__",
               "#if defined(__APPLE__) && TARGET_OS_OSX"
           )
 
-          boxed_marker = '#include "boxedwine.h"\n'
+          # -----------------------------------------------
+          # TargetConditionals is needed to tell macOS
+          # apart from iOS.
+          # -----------------------------------------------
 
-          target_include = """#include "boxedwine.h"
+          if "<TargetConditionals.h>" not in s:
+
+              marker = '#include "boxedwine.h"\n'
+
+              replacement = """#include "boxedwine.h"
 
           #ifdef __APPLE__
           #include <TargetConditionals.h>
           #endif
           """
 
-          if (
-              "<TargetConditionals.h>"
-              not in s
-          ):
-              if boxed_marker not in s:
+              if marker not in s:
                   raise SystemExit(
                       "boxedwine include marker not found"
                   )
 
               s = s.replace(
-                  boxed_marker,
-                  target_include,
+                  marker,
+                  replacement,
                   1
               )
 
-          p.write_text(s)
+          # -----------------------------------------------
+          # Force an OpenGL ES context.
+          # -----------------------------------------------
 
-          print("sdlgl.cpp iOS patch OK")
-          PY
+          reset = "    SDL_GL_ResetAttributes();"
 
-          echo "===== OPENGL HEADER ====="
-
-          sed -n '18,45p' \
-            Boxedwine/source/opengl/sdl/sdlgl.cpp
-
-      # ==========================================================
-      # SDL OPENGL ES CONTEXT PATCH
-      # ==========================================================
-
-      - name: Force SDL OpenGL ES context
-        run: |
-          set -e
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path(
-              "Boxedwine/source/opengl/sdl/sdlgl.cpp"
-          )
-
-          s = p.read_text()
-
-          marker = """    SDL_GL_ResetAttributes();
-          """
-
-          patch = """    SDL_GL_ResetAttributes();
+          es_setup = """    SDL_GL_ResetAttributes();
 
           #ifdef BOXEDWINE_ES
               SDL_GL_SetAttribute(
@@ -342,31 +309,125 @@ jobs:
                   SDL_GL_CONTEXT_MINOR_VERSION,
                   0
               );
-          #endif
-          """
+          #endif"""
 
-          if "SDL_GL_CONTEXT_PROFILE_ES" not in s:
-
-              if marker not in s:
+          if (
+              "SDL_GL_CONTEXT_PROFILE_ES"
+              not in s
+          ):
+              if reset not in s:
                   raise SystemExit(
-                      "SDL_GL_ResetAttributes marker not found"
+                      "SDL_GL_ResetAttributes not found"
                   )
 
               s = s.replace(
-                  marker,
-                  patch,
+                  reset,
+                  es_setup,
                   1
               )
 
-              p.write_text(s)
+          # -----------------------------------------------
+          # Do not override ES profile with desktop CORE.
+          # -----------------------------------------------
 
-          print("OpenGL ES context patch OK")
+          desktop_core = """    if (major) {
+                  if (major >= 3) {
+                      SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+                  }
+                  //#ifdef BOXEDWINE_MSVC
+                  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, major);
+                  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
+                  //#endif
+              }"""
+
+          desktop_core_fixed = """#ifndef BOXEDWINE_ES
+              if (major) {
+                  if (major >= 3) {
+                      SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+                  }
+                  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, major);
+                  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
+              }
+          #endif"""
+
+          if desktop_core in s:
+              s = s.replace(
+                  desktop_core,
+                  desktop_core_fixed,
+                  1
+              )
+
+          p.write_text(s)
+
+          print("sdlgl.cpp iOS patch OK")
           PY
 
+          echo "===== SDLGL TOP ====="
+
+          sed -n '18,55p' \
+            Boxedwine/source/opengl/sdl/sdlgl.cpp
+
       # ==========================================================
-      # PLATFORM SDL MAIN FIX
+      # FIX CURRENT ERROR:
+      # GLdouble / GLclampd ARE NOT IN GLES2 HEADERS
       #
-      # We provide IOSHost/main.mm ourselves.
+      # BoxedWine defines these inside esopengl.c, but
+      # esopengl.h is also included from C++ translation units.
+      # ==========================================================
+
+      - name: Fix GLdouble and GLclampd
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path(
+              "Boxedwine/source/opengl/es/esopengl.h"
+          )
+
+          if not p.exists():
+              raise SystemExit(
+                  "esopengl.h not found"
+              )
+
+          s = p.read_text()
+
+          marker = (
+              "/* BOXEDWINE_IOS_GLDOUBLE_FIX */"
+          )
+
+          if marker not in s:
+
+              patch = """/* BOXEDWINE_IOS_GLDOUBLE_FIX */
+
+          #ifndef GLdouble
+          #define GLdouble double
+          #endif
+
+          #ifndef GLclampd
+          #define GLclampd double
+          #endif
+
+          """
+
+              p.write_text(
+                  patch + s
+              )
+
+          print(
+              "GLdouble and GLclampd patch OK"
+          )
+          PY
+
+          echo "===== ES OPENGL HEADER ====="
+
+          head -25 \
+            Boxedwine/source/opengl/es/esopengl.h
+
+      # ==========================================================
+      # REMOVE DUPLICATE MAIN
+      # IOSHost/main.mm owns main()
       # ==========================================================
 
       - name: Patch SDL platform main
@@ -387,51 +448,35 @@ jobs:
 
           s = p.read_text()
 
-          old = """#ifndef __TEST
-          int boxedmain(int argc, const char** argv);
-          int main(int argc, char** argv) {
-              return boxedmain(argc, (const char**)argv);
-          }
-          #endif"""
+          old = "#ifndef __TEST"
 
-          new = """#if !defined(__TEST) && !defined(BOXEDWINE_IOS_HOST)
-          int boxedmain(int argc, const char** argv);
-          int main(int argc, char** argv) {
-              return boxedmain(argc, (const char**)argv);
-          }
-          #endif"""
+          new = (
+              "#if !defined(__TEST) && "
+              "!defined(BOXEDWINE_IOS_HOST)"
+          )
 
-          if old in s:
+          if new in s:
+              print(
+                  "main guard already patched"
+              )
+
+          elif old in s:
               s = s.replace(
                   old,
                   new,
                   1
               )
+
               p.write_text(s)
-              print("SDL duplicate main patch OK")
-          else:
+
               print(
-                  "Exact main block not found; trying tolerant patch"
+                  "duplicate main guard patched"
               )
 
-              marker = "#ifndef __TEST"
-
-              index = s.find(marker)
-
-              if index == -1:
-                  raise SystemExit(
-                      "main guard not found"
-                  )
-
-              s = (
-                  s[:index] +
-                  "#if !defined(__TEST) && "
-                  "!defined(BOXEDWINE_IOS_HOST)" +
-                  s[index + len(marker):]
+          else:
+              raise SystemExit(
+                  "main guard not found"
               )
-
-              p.write_text(s)
-              print("SDL main guard patched")
           PY
 
       # ==========================================================
@@ -475,17 +520,19 @@ jobs:
             build \
             2>&1 | tee sdl-build.log
 
-          SDL_LIB="$(find \
-            sdlbuild \
-            -type f \
-            -name 'libSDL2.a' \
-            | head -1)"
+          SDL_LIB="$(
+            find sdlbuild \
+              -type f \
+              -name 'libSDL2.a' \
+              | head -1
+          )"
 
           if [ -z "$SDL_LIB" ]; then
 
               echo "ERROR: libSDL2.a not found"
 
               exit 1
+
           fi
 
           mkdir -p \
@@ -498,6 +545,9 @@ jobs:
           echo "===== SDL2 ====="
 
           file \
+            "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
+
+          ls -lh \
             "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
 
       # ==========================================================
@@ -539,6 +589,7 @@ jobs:
           )"
 
           rm -rf minizip-build
+
           mkdir -p minizip-build
 
           for SRC in \
@@ -572,8 +623,19 @@ jobs:
           file \
             Vendor/libminizip.a
 
+          ls -lh \
+            Vendor/libminizip.a
+
       # ==========================================================
       # IPHONE LAUNCHER
+      #
+      # Expected later in Documents:
+      #
+      # Wine.zip
+      #
+      # postal2/
+      #   System/
+      #     Postal2.exe
       # ==========================================================
 
       - name: Create POSTAL 2 launcher
@@ -597,7 +659,7 @@ jobs:
               const char **argv
           );
 
-          static bool exists(
+          static bool fileExists(
               const std::string& path
           ) {
               struct stat st {};
@@ -658,14 +720,17 @@ jobs:
                   std::string wineZip =
                       docs + "/Wine.zip";
 
-                  if (!exists(wineZip)) {
+                  if (!fileExists(wineZip)) {
 
                       std::vector<std::string>
                           candidates = {
 
                           docs + "/Wine-5.0.zip",
+
                           docs + "/Wine-7.0.zip",
+
                           docs + "/Wine-9.0.zip",
+
                           docs + "/Wine-11.0.zip"
                       };
 
@@ -675,10 +740,12 @@ jobs:
                       ) {
 
                           if (
-                              exists(candidate)
+                              fileExists(candidate)
                           ) {
+
                               wineZip =
                                   candidate;
+
                               break;
                           }
                       }
@@ -688,10 +755,10 @@ jobs:
                       docs + "/postal2";
 
                   std::string exe =
-                      game +
-                      "/System/Postal2.exe";
+                      game
+                      + "/System/Postal2.exe";
 
-                  if (!exists(wineZip)) {
+                  if (!fileExists(wineZip)) {
 
                       showMessage(
                           "POSTAL 2",
@@ -701,7 +768,7 @@ jobs:
                       return 0;
                   }
 
-                  if (!exists(exe)) {
+                  if (!fileExists(exe)) {
 
                       showMessage(
                           "POSTAL 2",
@@ -798,11 +865,13 @@ jobs:
           EOF
 
       # ==========================================================
-      # INFO.PLIST
+      # INFO PLIST
       # ==========================================================
 
       - name: Create Info plist
         run: |
+          set -e
+
           mkdir -p IOSHost
 
           cat > IOSHost/Info.plist <<'EOF'
@@ -832,10 +901,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>0.7</string>
+              <string>0.8</string>
 
               <key>CFBundleVersion</key>
-              <string>7</string>
+              <string>8</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -852,6 +921,7 @@ jobs:
               <key>UISupportedInterfaceOrientations</key>
 
               <array>
+
                   <string>
                   UIInterfaceOrientationLandscapeLeft
                   </string>
@@ -859,6 +929,7 @@ jobs:
                   <string>
                   UIInterfaceOrientationLandscapeRight
                   </string>
+
               </array>
 
               <key>
@@ -882,6 +953,8 @@ jobs:
 
       - name: Create Xcode project
         run: |
+          set -e
+
           cat > project.yml <<'EOF'
           name: Postal2BoxedWine
 
@@ -891,7 +964,9 @@ jobs:
               com.postal2
 
             deploymentTarget:
-              iOS: "15.0"
+
+              iOS:
+                "15.0"
 
           settings:
 
@@ -929,6 +1004,7 @@ jobs:
                 iOS
 
               info:
+
                 path:
                   IOSHost/Info.plist
 
@@ -947,6 +1023,8 @@ jobs:
                     - "ui/**"
 
                     - "vulkan/**"
+
+                    - "opengl/osmesa/**"
 
                 - path:
                     Boxedwine/platform/sdl
@@ -1001,13 +1079,10 @@ jobs:
 
                     - "BOXEDWINE_64=1"
 
-                    # SDL host/window backend
                     - "BOXEDWINE_OPENGL_SDL=1"
 
-                    # Translate desktop OpenGL calls to GLES
                     - "BOXEDWINE_OPENGL_ES=1"
 
-                    # Request SDL OpenGL ES context
                     - "BOXEDWINE_ES=1"
 
                     - "BOXEDWINE_ZLIB=1"
@@ -1095,9 +1170,6 @@ jobs:
                 - sdk:
                     CoreHaptics.framework
 
-                - sdk:
-                    Metal.framework
-
           EOF
 
           xcodegen generate
@@ -1105,7 +1177,7 @@ jobs:
           test -d \
             Postal2BoxedWine.xcodeproj
 
-          echo "===== FLAGS ====="
+          echo "===== BUILD SETTINGS ====="
 
           xcodebuild \
             -project Postal2BoxedWine.xcodeproj \
@@ -1171,6 +1243,7 @@ jobs:
               tail -250 \
                 boxedwine-ios-build.log \
                 || true
+
           fi
 
           exit "$STATUS"
@@ -1184,18 +1257,21 @@ jobs:
         run: |
           set -e
 
-          APP="$(find \
-            build/Build/Products \
-            -type d \
-            -name '*.app' \
-            -path '*Release-iphoneos*' \
-            | head -1)"
+          APP="$(
+            find \
+              build/Build/Products \
+              -type d \
+              -name '*.app' \
+              -path '*Release-iphoneos*' \
+              | head -1
+          )"
 
           if [ -z "$APP" ]; then
 
               echo "ERROR: iPhone .app not found"
 
               exit 1
+
           fi
 
           echo "APP=$APP" \
@@ -1208,7 +1284,7 @@ jobs:
           du -sh "$APP"
 
       # ==========================================================
-      # IPA
+      # CREATE IPA
       # ==========================================================
 
       - name: Create IPA
@@ -1218,7 +1294,7 @@ jobs:
 
           rm -rf Payload
 
-          mkdir Payload
+          mkdir -p Payload
 
           cp -R \
             "$APP" \
@@ -1246,6 +1322,7 @@ jobs:
         if: success()
 
         env:
+
           GH_TOKEN:
             ${{ github.token }}
 
@@ -1255,6 +1332,7 @@ jobs:
           TAG="postal2-ios-${GITHUB_RUN_NUMBER}"
 
           echo "===== RELEASE ====="
+
           echo "$TAG"
 
           gh release create \
@@ -1266,7 +1344,7 @@ jobs:
 
           {
               echo
-              echo "# ✅ POSTAL 2 IPA READY"
+              echo "# POSTAL 2 IPA READY"
               echo
               echo "Открой Releases."
               echo
