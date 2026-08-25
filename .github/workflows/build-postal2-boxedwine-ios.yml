@@ -56,23 +56,13 @@ jobs:
           git rev-parse HEAD
           cd ..
 
-          test -f \
-            Boxedwine/source/sdl/main.cpp
-
-          test -f \
-            Boxedwine/source/util/networkutils.cpp
-
-          test -f \
-            Boxedwine/source/util/networkutils.h
-
-          test -f \
-            Boxedwine/source/opengl/glcommon.h
-
-          test -f \
-            Boxedwine/source/opengl/sdl/sdlgl.cpp
-
-          test -f \
-            Boxedwine/platform/sdl/knativesystem.cpp
+          test -f Boxedwine/source/sdl/main.cpp
+          test -f Boxedwine/source/util/networkutils.cpp
+          test -f Boxedwine/source/opengl/glcommon.h
+          test -f Boxedwine/source/opengl/glMarshal.h
+          test -f Boxedwine/source/opengl/glMarshal.cpp
+          test -f Boxedwine/source/opengl/sdl/sdlgl.cpp
+          test -f Boxedwine/platform/sdl/knativesystem.cpp
 
       # ==========================================================
       # BHASHTABLE APPLE CLANG FIX
@@ -119,13 +109,7 @@ jobs:
           PY
 
       # ==========================================================
-      # CURL FIX
-      #
-      # BoxedWine normally uses libcurl on non-Windows hosts.
-      # We don't need its downloader for our iOS runtime because
-      # Wine.zip + postal2 are local files.
-      #
-      # This completely removes curl/curl.h from the iOS build.
+      # DISABLE CURL
       # ==========================================================
 
       - name: Disable BoxedWine network downloader on iOS
@@ -136,11 +120,8 @@ jobs:
             Boxedwine/source/util/networkutils.cpp \
             <<'EOF'
           /*
-           * iOS local-runtime replacement for BoxedWine
-           * networkutils.cpp.
-           *
-           * POSTAL 2 and Wine are supplied locally, so the
-           * BoxedWine HTTP downloader is not required.
+           * iOS local runtime:
+           * POSTAL 2 and Wine are supplied locally.
            */
 
           #include "boxedwine.h"
@@ -161,29 +142,25 @@ jobs:
               (void)cancel;
 
               errorMsg = BString::copy(
-                  "Network downloader disabled in iOS runtime"
+                  "Network downloader disabled on iOS"
               );
 
               return false;
           }
           EOF
 
-          echo "===== NETWORKUTILS IOS ====="
-
-          cat \
-            Boxedwine/source/util/networkutils.cpp
-
           if grep \
             -q \
             "curl/curl.h" \
             Boxedwine/source/util/networkutils.cpp
           then
+
               echo "ERROR: curl still present"
               exit 1
+
           fi
 
-          echo
-          echo "CURL REMOVED FROM IOS BUILD"
+          echo "CURL disabled"
 
       # ==========================================================
       # SIMDE
@@ -201,21 +178,8 @@ jobs:
             https://github.com/simd-everywhere/simde.git \
             SIMDe
 
-          test -f \
-            SIMDe/simde/x86/sse.h
-
-          test -f \
-            SIMDe/simde/x86/sse2.h
-
-          echo "===== SIMDE ====="
-
-          cd SIMDe
-          git describe --tags --always
-          cd ..
-
-      # ==========================================================
-      # SIMDE XCODE FIX
-      # ==========================================================
+          test -f SIMDe/simde/x86/sse.h
+          test -f SIMDe/simde/x86/sse2.h
 
       - name: Patch SIMDe
         run: |
@@ -261,7 +225,7 @@ jobs:
 
           fixed = (
               "#elif 0 "
-              "/* iPhone: force scalar fallback */"
+              "/* iPhone scalar fallback */"
           )
 
           if fixed not in block:
@@ -327,12 +291,10 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             SYMROOT="$PWD/sdlbuild" \
             build \
-            2>&1 \
-            | tee sdl-build.log
+            2>&1 | tee sdl-build.log
 
           SDL_LIB="$(
-            find \
-              sdlbuild \
+            find sdlbuild \
               -type f \
               -name 'libSDL2.a' \
               | head -1
@@ -340,10 +302,9 @@ jobs:
 
           if [ -z "$SDL_LIB" ]; then
 
-              echo \
-                "ERROR: libSDL2.a not found"
-
+              echo "ERROR: libSDL2.a not found"
               exit 1
+
           fi
 
           mkdir -p \
@@ -353,13 +314,20 @@ jobs:
             "$SDL_LIB" \
             "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
 
-          echo "===== SDL2 ====="
-
           file \
             "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
 
       # ==========================================================
       # OPENGL COMPATIBILITY
+      #
+      # Fixes:
+      #
+      # GLAPIENTRY
+      # GLdouble
+      # GLclampd
+      # GL_TEXTURE_ENV_COLOR
+      # GL_OBJECT_PLANE
+      # GL_EYE_PLANE
       # ==========================================================
 
       - name: Create OpenGL compatibility headers
@@ -372,16 +340,12 @@ jobs:
             IOSCompat/GL \
             IOSCompat/KHR
 
-          echo "===== DOWNLOAD glext.h ====="
-
           curl \
             --fail \
             --location \
             --retry 3 \
             https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/main/api/GL/glext.h \
             -o IOSCompat/GL/glext.h
-
-          echo "===== DOWNLOAD khrplatform.h ====="
 
           curl \
             --fail \
@@ -390,22 +354,28 @@ jobs:
             https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/main/api/KHR/khrplatform.h \
             -o IOSCompat/KHR/khrplatform.h
 
-          test -s \
-            IOSCompat/GL/glext.h
-
-          test -s \
-            IOSCompat/KHR/khrplatform.h
+          test -s IOSCompat/GL/glext.h
+          test -s IOSCompat/KHR/khrplatform.h
 
           cat > IOSCompat/IOSGLCompat.h <<'EOF'
           #ifndef BOXEDWINE_IOS_GL_COMPAT_H
           #define BOXEDWINE_IOS_GL_COMPAT_H
 
+          /*
+           * Real renderer on iPhone.
+           */
           #include <SDL_opengles2.h>
 
+          /*
+           * Calling convention expected by BoxedWine.
+           */
           #ifndef GLAPIENTRY
           #define GLAPIENTRY APIENTRY
           #endif
 
+          /*
+           * Desktop GL double types.
+           */
           #ifndef GLdouble
           typedef double GLdouble;
           #endif
@@ -414,68 +384,87 @@ jobs:
           typedef double GLclampd;
           #endif
 
+          /*
+           * Khronos ARB / EXT declarations.
+           */
           #include <GL/glext.h>
+
+          /*
+           * Legacy OpenGL 1.x enums absent from GLES2.
+           *
+           * BoxedWine glfunctions_ext3.cpp needs these for
+           * argument-size calculations. They are standard
+           * OpenGL enum numeric values.
+           */
+
+          #ifndef GL_TEXTURE_ENV_COLOR
+          #define GL_TEXTURE_ENV_COLOR 0x2201
+          #endif
+
+          #ifndef GL_OBJECT_PLANE
+          #define GL_OBJECT_PLANE 0x2501
+          #endif
+
+          #ifndef GL_EYE_PLANE
+          #define GL_EYE_PLANE 0x2502
+          #endif
 
           #endif
           EOF
 
-          echo "===== IOS GL COMPAT ====="
+          echo "===== IOSGLCompat.h ====="
 
           cat \
             IOSCompat/IOSGLCompat.h
 
       # ==========================================================
-      # TEST PREVIOUS OPENGL PROBLEMS BEFORE BIG BUILD
+      # TEST ALL KNOWN GL COMPATIBILITY PROBLEMS
       # ==========================================================
 
       - name: Test OpenGL compatibility
         run: |
           set -e
 
-          cat > \
-            /tmp/glcompat-test.cpp \
-            <<'EOF'
+          cat > /tmp/glcompat-test.cpp <<'EOF'
           #include <IOSGLCompat.h>
 
           GLdouble a = 0.0;
           GLclampd b = 0.0;
 
-          GLhandleARB c = 0;
-          GLcharARB d = 0;
+          GLhandleARB handle = 0;
+          GLcharARB ch = 0;
 
-          GLintptrARB e = 0;
-          GLsizeiptrARB f = 0;
+          GLintptrARB ptr = 0;
+          GLsizeiptrARB size = 0;
 
-          GLhalfARB g = 0;
-          GLhalfNV h = 0;
+          GLenum env =
+              GL_TEXTURE_ENV_COLOR;
+
+          GLenum objectPlane =
+              GL_OBJECT_PLANE;
+
+          GLenum eyePlane =
+              GL_EYE_PLANE;
 
           typedef void (
-              GLAPIENTRY *TestFinish
+              GLAPIENTRY *TestProc
           )();
 
-          typedef void (
-              GLAPIENTRY *TestFlush
-          )();
-
-          TestFinish finishProc =
-              nullptr;
-
-          TestFlush flushProc =
+          TestProc proc =
               nullptr;
 
           int main() {
 
               (void)a;
               (void)b;
-              (void)c;
-              (void)d;
-              (void)e;
-              (void)f;
-              (void)g;
-              (void)h;
-
-              (void)finishProc;
-              (void)flushProc;
+              (void)handle;
+              (void)ch;
+              (void)ptr;
+              (void)size;
+              (void)env;
+              (void)objectPlane;
+              (void)eyePlane;
+              (void)proc;
 
               return 0;
           }
@@ -503,10 +492,7 @@ jobs:
             -ISDL2/include \
             /tmp/glcompat-test.cpp
 
-          echo
-          echo "======================================"
-          echo "OPENGL COMPAT TEST PASSED"
-          echo "======================================"
+          echo "GL compatibility test PASSED"
 
       # ==========================================================
       # BOXEDWINE GL COMMON
@@ -560,6 +546,33 @@ jobs:
           PY
 
       # ==========================================================
+      # GLhandleARB POINTER MODE
+      #
+      # IMPORTANT:
+      # Khronos defines GLhandleARB as void* on Apple.
+      #
+      # BoxedWine already contains a proper 32-bit guest index
+      # <-> native pointer mapping for exactly this situation.
+      # ==========================================================
+
+      - name: Verify GLhandleARB pointer support
+        run: |
+          set -e
+
+          grep \
+            -n \
+            "BOXEDWINE_GLHANDLE_ARB_POINTER" \
+            Boxedwine/source/opengl/glMarshal.h
+
+          grep \
+            -n \
+            "marshalIndexToHandle" \
+            Boxedwine/source/opengl/glMarshal.h
+
+          echo \
+            "BoxedWine GLhandleARB pointer mapper found"
+
+      # ==========================================================
       # SDL OPENGL -> IPHONE GLES
       # ==========================================================
 
@@ -580,9 +593,6 @@ jobs:
               )
 
           s = p.read_text()
-
-          # iOS also defines __APPLE__, but these branches
-          # in BoxedWine are for macOS/CGL.
 
           s = s.replace(
               "#ifdef __APPLE__",
@@ -607,7 +617,7 @@ jobs:
 
               if marker not in s:
                   raise SystemExit(
-                      "boxedwine.h include not found"
+                      "boxedwine include not found"
                   )
 
               s = s.replace(
@@ -666,15 +676,6 @@ jobs:
               "sdlgl.cpp iPhone patch OK"
           )
           PY
-
-          echo "===== SDLGL CHECK ====="
-
-          grep \
-            -n \
-            -E \
-            "IOSGLCompat|TARGET_OS_OSX|SDL_GL_CONTEXT_PROFILE_ES" \
-            Boxedwine/source/opengl/sdl/sdlgl.cpp \
-            | head -30
 
       # ==========================================================
       # DISABLE BOXEDWINE DEFAULT MAIN
@@ -792,8 +793,6 @@ jobs:
             Vendor/libminizip.a \
             minizip-build/*.o
 
-          echo "===== MINIZIP ====="
-
           file \
             Vendor/libminizip.a
 
@@ -890,15 +889,10 @@ jobs:
                           candidates = {
 
                           docs + "/Wine-5.0.zip",
-
                           docs + "/Wine-6.0.zip",
-
                           docs + "/Wine-7.0.zip",
-
                           docs + "/Wine-9.0.zip",
-
                           docs + "/Wine-10.0.zip",
-
                           docs + "/Wine-11.0.zip"
                       };
 
@@ -1033,7 +1027,7 @@ jobs:
           EOF
 
       # ==========================================================
-      # INFO PLIST
+      # INFO.PLIST
       # ==========================================================
 
       - name: Create Info plist
@@ -1067,10 +1061,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>1.4</string>
+              <string>1.5</string>
 
               <key>CFBundleVersion</key>
-              <string>14</string>
+              <string>15</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -1105,6 +1099,7 @@ jobs:
               <true/>
 
               <key>UILaunchScreen</key>
+
               <dict/>
 
           </dict>
@@ -1256,6 +1251,12 @@ jobs:
 
                     - "BOXEDWINE_IOS_HOST=1"
 
+                    # IMPORTANT:
+                    # Apple/Khronos GLhandleARB is a pointer.
+                    # Use BoxedWine's own pointer-index mapper.
+
+                    - "BOXEDWINE_GLHANDLE_ARB_POINTER=1"
+
                     - "SIMDE_NO_NATIVE=1"
 
                     - "SIMDE_NO_VECTOR=1"
@@ -1342,11 +1343,18 @@ jobs:
           test -d \
             Postal2BoxedWine.xcodeproj
 
+          echo "===== IMPORTANT FLAGS ====="
+
+          xcodebuild \
+            -project Postal2BoxedWine.xcodeproj \
+            -scheme Postal2BoxedWine \
+            -showBuildSettings \
+            | grep \
+            BOXEDWINE_GLHANDLE_ARB_POINTER \
+            || true
+
       # ==========================================================
       # BUILD
-      #
-      # Do not fail immediately:
-      # first collect all compiler errors.
       # ==========================================================
 
       - name: Build iPhone BoxedWine
@@ -1357,8 +1365,7 @@ jobs:
 
           rm -f \
             boxedwine-ios-build.log \
-            boxedwine-build-status.txt \
-            LAST_ERRORS.txt
+            boxedwine-build-status.txt
 
           xcodebuild \
             -quiet \
@@ -1399,10 +1406,18 @@ jobs:
           exit 0
 
       # ==========================================================
-      # AUTOMATIC ERROR REPORT
+      # UNIQUE ERROR REPORT
+      #
+      # Every run gets its own file:
+      #
+      # LAST_ERRORS_16.txt
+      # LAST_ERRORS_17.txt
+      # ...
+      #
+      # LAST_ERRORS_LATEST.txt always contains the newest one.
       # ==========================================================
 
-      - name: Save ALL compiler errors
+      - name: Save unique compiler error report
         shell: bash
         run: |
           set -e
@@ -1417,11 +1432,21 @@ jobs:
                 "Build succeeded. No error report needed."
 
               exit 0
-
           fi
 
-          python3 - <<'PY'
+          ERROR_FILE="LAST_ERRORS_${GITHUB_RUN_NUMBER}.txt"
+
+          echo \
+            "ERROR_FILE=$ERROR_FILE" \
+            >> "$GITHUB_ENV"
+
+          python3 - "$ERROR_FILE" <<'PY'
           from pathlib import Path
+          import sys
+
+          output_path = Path(
+              sys.argv[1]
+          )
 
           log = Path(
               "boxedwine-ios-build.log"
@@ -1444,94 +1469,110 @@ jobs:
               i
               for i, line in enumerate(lines)
               if any(
-                  keyword in line.lower()
-                  for keyword in keywords
+                  key in line.lower()
+                  for key in keywords
               )
           ]
 
           selected = set()
 
-          for i in indexes:
+          for index in indexes:
 
               selected.update(
                   range(
                       max(
                           0,
-                          i - 12
+                          index - 12
                       ),
                       min(
                           len(lines),
-                          i + 14
+                          index + 14
                       )
                   )
               )
 
-          out = [
+          output = [
               "POSTAL 2 iOS / BOXEDWINE",
+              f"GITHUB RUN: {output_path.stem}",
               "COMPLETE COMPILER ERROR REPORT",
-              "=" * 70,
+              "=" * 72,
               f"Detected error lines: {len(indexes)}",
               ""
           ]
 
           previous = -100
 
-          for i in sorted(
+          for index in sorted(
               selected
           ):
 
               if (
-                  i >
+                  index >
                   previous + 1
               ):
 
-                  out += [
+                  output += [
                       "",
-                      "-" * 70,
+                      "-" * 72,
                       ""
                   ]
 
-              out.append(
-                  f"{i + 1}: {lines[i]}"
+              output.append(
+                  f"{index + 1}: "
+                  f"{lines[index]}"
               )
 
-              previous = i
+              previous = index
 
-          out += [
+          output += [
               "",
-              "=" * 70,
-              "LAST 250 RAW BUILD LINES",
-              "=" * 70,
+              "=" * 72,
+              "LAST 300 RAW BUILD LINES",
+              "=" * 72,
               ""
           ]
 
-          tail = lines[-250:]
+          tail = lines[-300:]
 
-          start = (
+          first_line = (
               len(lines)
               - len(tail)
               + 1
           )
 
-          out.extend(
-              f"{start + offset}: {line}"
-              for offset, line
-              in enumerate(tail)
-          )
+          for offset, line in enumerate(
+              tail
+          ):
 
-          Path(
-              "LAST_ERRORS.txt"
-          ).write_text(
-              "\n".join(out)
+              output.append(
+                  f"{first_line + offset}: "
+                  f"{line}"
+              )
+
+          text = (
+              "\n".join(output)
               + "\n"
           )
 
-          print(
-              Path(
-                  "LAST_ERRORS.txt"
-              ).read_text()
+          output_path.write_text(
+              text
           )
+
+          Path(
+              "LAST_ERRORS_LATEST.txt"
+          ).write_text(
+              text
+          )
+
+          print(text)
           PY
+
+          echo
+          echo "===== SAVE UNIQUE ERROR LOG ====="
+
+          ls -lh \
+            "$ERROR_FILE" \
+            LAST_ERRORS_LATEST.txt
 
           git config \
             user.name \
@@ -1543,7 +1584,8 @@ jobs:
 
           git add \
             -f \
-            LAST_ERRORS.txt
+            "$ERROR_FILE" \
+            LAST_ERRORS_LATEST.txt
 
           if ! git diff \
             --cached \
@@ -1552,7 +1594,7 @@ jobs:
 
               git commit \
                 -m \
-                "Save latest BoxedWine iOS errors"
+                "Save BoxedWine iOS errors run ${GITHUB_RUN_NUMBER}"
 
               git push \
                 origin \
@@ -1561,7 +1603,7 @@ jobs:
           fi
 
       # ==========================================================
-      # CHECK RESULT
+      # CHECK BUILD RESULT
       # ==========================================================
 
       - name: Check BoxedWine build result
@@ -1576,7 +1618,7 @@ jobs:
               echo
               echo "======================================"
               echo "BOXEDWINE BUILD FAILED"
-              echo "Errors saved to LAST_ERRORS.txt"
+              echo "Unique error log was saved."
               echo "======================================"
 
               exit "$STATUS"
@@ -1607,10 +1649,9 @@ jobs:
 
           if [ -z "$APP" ]; then
 
-              echo \
-                "ERROR: app not found"
-
+              echo "ERROR: app not found"
               exit 1
+
           fi
 
           echo \
@@ -1625,18 +1666,16 @@ jobs:
             "$APP"
 
       # ==========================================================
-      # IPA
+      # CREATE IPA
       # ==========================================================
 
       - name: Create IPA
         run: |
           set -e
 
-          rm -rf \
-            Payload
+          rm -rf Payload
 
-          mkdir \
-            Payload
+          mkdir Payload
 
           cp \
             -R \
@@ -1662,6 +1701,7 @@ jobs:
       # ==========================================================
 
       - name: Publish IPA to Releases
+
         env:
 
           GH_TOKEN:
@@ -1671,9 +1711,6 @@ jobs:
           set -e
 
           TAG="postal2-ios-${GITHUB_RUN_NUMBER}"
-
-          echo "===== RELEASE ====="
-          echo "$TAG"
 
           gh release create \
             "$TAG" \
@@ -1690,6 +1727,5 @@ jobs:
               echo
               echo "Открой Releases."
               echo
-              echo \
-                "Скачай POSTAL2-BoxedWine-iOS.ipa"
+              echo "Скачай POSTAL2-BoxedWine-iOS.ipa"
           } >> "$GITHUB_STEP_SUMMARY"
