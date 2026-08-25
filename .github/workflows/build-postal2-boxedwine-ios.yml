@@ -58,6 +58,7 @@ jobs:
 
           test -d Boxedwine/source
           test -d Boxedwine/platform/sdl
+
           test -f Boxedwine/source/sdl/main.cpp
           test -f Boxedwine/source/opengl/glcommon.h
           test -f Boxedwine/source/opengl/glfunctions.h
@@ -76,14 +77,22 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("Boxedwine/source/util/bhashtable.h")
+          path = Path(
+              "Boxedwine/source/util/bhashtable.h"
+          )
+
           text = path.read_text()
 
-          marker = "struct iterator : public const_iterator {"
+          marker = (
+              "struct iterator : public const_iterator {"
+          )
 
           if "using const_iterator::owner;" not in text:
+
               if marker not in text:
-                  raise SystemExit("BHashTable iterator not found")
+                  raise SystemExit(
+                      "BHashTable iterator not found"
+                  )
 
               replacement = """struct iterator : public const_iterator {
               using const_iterator::owner;
@@ -137,10 +146,15 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("SIMDe/simde/x86/sse2.h")
+          path = Path(
+              "SIMDe/simde/x86/sse2.h"
+          )
+
           text = path.read_text()
 
-          start = text.find("simde_mm_cvtpd_ps")
+          start = text.find(
+              "simde_mm_cvtpd_ps"
+          )
 
           if start < 0:
               raise SystemExit(
@@ -173,9 +187,13 @@ jobs:
           )
 
           if fixed in block:
-              print("SIMDe already patched")
+
+              print(
+                  "SIMDe already patched"
+              )
 
           elif broken in block:
+
               block = block.replace(
                   broken,
                   fixed,
@@ -190,7 +208,9 @@ jobs:
 
               path.write_text(text)
 
-              print("SIMDe patched")
+              print(
+                  "SIMDe patched"
+              )
 
           else:
               raise SystemExit(
@@ -247,7 +267,9 @@ jobs:
           )"
 
           if [ -z "$SDL_LIB" ]; then
+
               echo "ERROR: libSDL2.a not found"
+
               exit 1
           fi
 
@@ -265,6 +287,8 @@ jobs:
 
       # ==========================================================
       # OPENGL COMPATIBILITY
+      #
+      # GLAPIENTRY FIX IS HERE
       # ==========================================================
 
       - name: Create OpenGL compatibility headers
@@ -295,15 +319,34 @@ jobs:
             https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/main/api/KHR/khrplatform.h \
             -o IOSCompat/KHR/khrplatform.h
 
-          test -s IOSCompat/GL/glext.h
-          test -s IOSCompat/KHR/khrplatform.h
+          test -s \
+            IOSCompat/GL/glext.h
+
+          test -s \
+            IOSCompat/KHR/khrplatform.h
 
           cat > IOSCompat/IOSGLCompat.h <<'EOF'
           #ifndef BOXEDWINE_IOS_GL_COMPAT_H
           #define BOXEDWINE_IOS_GL_COMPAT_H
 
+          /*
+           * Actual OpenGL ES 2 headers on iPhone.
+           */
           #include <SDL_opengles2.h>
 
+          /*
+           * BoxedWine desktop OpenGL code expects GLAPIENTRY.
+           *
+           * SDL_opengles2.h guarantees APIENTRY.
+           * Map BoxedWine's expected name to it.
+           */
+          #ifndef GLAPIENTRY
+          #define GLAPIENTRY APIENTRY
+          #endif
+
+          /*
+           * Desktop OpenGL types absent from GLES2.
+           */
           #ifndef GLdouble
           typedef double GLdouble;
           #endif
@@ -312,6 +355,17 @@ jobs:
           typedef double GLclampd;
           #endif
 
+          /*
+           * Khronos desktop extension types/enums:
+           *
+           * GLhandleARB
+           * GLcharARB
+           * GLintptrARB
+           * GLsizeiptrARB
+           * GLhalfARB
+           * GLhalfNV
+           * etc.
+           */
           #include <GL/glext.h>
 
           #endif
@@ -324,8 +378,17 @@ jobs:
             IOSCompat/KHR/khrplatform.h \
             IOSCompat/IOSGLCompat.h
 
+          echo
+          echo "===== IOSGLCompat.h ====="
+
+          cat \
+            IOSCompat/IOSGLCompat.h
+
       # ==========================================================
-      # TEST GL TYPES BEFORE BIG BUILD
+      # TEST OPENGL TYPES + GLAPIENTRY
+      #
+      # If this is green, the exact previous error is gone
+      # BEFORE the full BoxedWine build starts.
       # ==========================================================
 
       - name: Test OpenGL compatibility
@@ -337,14 +400,32 @@ jobs:
 
           GLdouble a = 0.0;
           GLclampd b = 0.0;
+
           GLhandleARB c = 0;
           GLcharARB d = 0;
+
           GLintptrARB e = 0;
           GLsizeiptrARB f = 0;
+
           GLhalfARB g = 0;
           GLhalfNV h = 0;
 
+          /*
+           * EXACT form that failed in BoxedWine:
+           */
+          typedef void (
+              GLAPIENTRY *TestGLFinish
+          )();
+
+          typedef void (
+              GLAPIENTRY *TestGLFlush
+          )();
+
+          TestGLFinish finishProc = nullptr;
+          TestGLFlush flushProc = nullptr;
+
           int main() {
+
               (void)a;
               (void)b;
               (void)c;
@@ -353,6 +434,10 @@ jobs:
               (void)f;
               (void)g;
               (void)h;
+
+              (void)finishProc;
+              (void)flushProc;
+
               return 0;
           }
           EOF
@@ -379,10 +464,14 @@ jobs:
             -ISDL2/include \
             /tmp/glcompat-test.cpp
 
-          echo "===== GL COMPAT TEST PASSED ====="
+          echo
+          echo "======================================"
+          echo "OPENGL COMPAT TEST PASSED"
+          echo "GLAPIENTRY TEST PASSED"
+          echo "======================================"
 
       # ==========================================================
-      # PATCH BOXEDWINE OPENGL HEADER
+      # PATCH BOXEDWINE GLCOMMON
       # ==========================================================
 
       - name: Patch BoxedWine GL common header
@@ -398,7 +487,9 @@ jobs:
 
           text = path.read_text()
 
-          marker = "#ifdef BOXEDWINE_OPENGL\n"
+          marker = (
+              "#ifdef BOXEDWINE_OPENGL\n"
+          )
 
           patch = """#ifdef BOXEDWINE_OPENGL
 
@@ -407,7 +498,11 @@ jobs:
           #endif
           """
 
-          if "#include <IOSGLCompat.h>" not in text:
+          if (
+              "#include <IOSGLCompat.h>"
+              not in text
+          ):
+
               if marker not in text:
                   raise SystemExit(
                       "BOXEDWINE_OPENGL marker not found"
@@ -421,11 +516,13 @@ jobs:
 
               path.write_text(text)
 
-          print("glcommon.h patched")
+          print(
+              "glcommon.h patched"
+          )
           PY
 
       # ==========================================================
-      # SDL OPENGL -> GLES
+      # PATCH SDL OPENGL -> IPHONE GLES
       # ==========================================================
 
       - name: Patch SDL OpenGL for iPhone
@@ -441,13 +538,25 @@ jobs:
 
           text = path.read_text()
 
+          /*
+           * NOTE:
+           * The lines below are Python replacements,
+           * not C++.
+           */
+
           text = text.replace(
               "#ifdef __APPLE__",
               "#if defined(__APPLE__) && TARGET_OS_OSX"
           )
 
-          if "#include <TargetConditionals.h>" not in text:
-              marker = '#include "boxedwine.h"\n'
+          if (
+              "#include <TargetConditionals.h>"
+              not in text
+          ):
+
+              marker = (
+                  '#include "boxedwine.h"\n'
+              )
 
               replacement = """#include "boxedwine.h"
 
@@ -472,7 +581,9 @@ jobs:
               "#include <IOSGLCompat.h>"
           )
 
-          reset = "    SDL_GL_ResetAttributes();"
+          reset = (
+              "    SDL_GL_ResetAttributes();"
+          )
 
           es_setup = """    SDL_GL_ResetAttributes();
 
@@ -493,7 +604,11 @@ jobs:
               );
           #endif"""
 
-          if "SDL_GL_CONTEXT_PROFILE_ES" not in text:
+          if (
+              "SDL_GL_CONTEXT_PROFILE_ES"
+              not in text
+          ):
+
               if reset not in text:
                   raise SystemExit(
                       "SDL_GL_ResetAttributes not found"
@@ -507,7 +622,9 @@ jobs:
 
           path.write_text(text)
 
-          print("sdlgl.cpp patched")
+          print(
+              "sdlgl.cpp patched"
+          )
           PY
 
       # ==========================================================
@@ -535,9 +652,13 @@ jobs:
           )
 
           if new in text:
-              print("default main already disabled")
+
+              print(
+                  "default main already disabled"
+              )
 
           elif old in text:
+
               text = text.replace(
                   old,
                   new,
@@ -546,7 +667,9 @@ jobs:
 
               path.write_text(text)
 
-              print("default main disabled")
+              print(
+                  "default main disabled"
+              )
 
           else:
               raise SystemExit(
@@ -593,7 +716,9 @@ jobs:
           )"
 
           rm -rf minizip-build
-          mkdir -p minizip-build
+
+          mkdir -p \
+            minizip-build
 
           for SRC in \
             ioapi.c \
@@ -618,7 +743,8 @@ jobs:
 
           /usr/bin/libtool \
             -static \
-            -o Vendor/libminizip.a \
+            -o \
+            Vendor/libminizip.a \
             minizip-build/*.o
 
           echo "===== MINIZIP ====="
@@ -627,7 +753,7 @@ jobs:
             Vendor/libminizip.a
 
       # ==========================================================
-      # IOS LAUNCHER
+      # IPHONE LAUNCHER
       # ==========================================================
 
       - name: Create iPhone launcher
@@ -729,8 +855,14 @@ jobs:
                           const auto& candidate :
                           candidates
                       ) {
-                          if (exists(candidate)) {
-                              wineZip = candidate;
+
+                          if (
+                              exists(candidate)
+                          ) {
+
+                              wineZip =
+                                  candidate;
+
                               break;
                           }
                       }
@@ -744,6 +876,7 @@ jobs:
                       "/System/Postal2.exe";
 
                   if (!exists(wineZip)) {
+
                       showMessage(
                           "POSTAL 2",
                           "Нужен Wine.zip в папке приложения."
@@ -753,6 +886,7 @@ jobs:
                   }
 
                   if (!exists(exe)) {
+
                       showMessage(
                           "POSTAL 2",
                           "Положи папку postal2 в Documents приложения."
@@ -785,7 +919,8 @@ jobs:
                       "GL_ARB_texture_compression "
                       "GL_EXT_paletted_texture";
 
-                  std::vector<std::string> values = {
+                  std::vector<std::string>
+                      values = {
 
                       "BoxedWine",
 
@@ -825,12 +960,14 @@ jobs:
                       "d:\\System\\Postal2.exe"
                   };
 
-                  std::vector<const char*> args;
+                  std::vector<const char*>
+                      args;
 
                   for (
                       auto& value :
                       values
                   ) {
+
                       args.push_back(
                           value.c_str()
                       );
@@ -845,7 +982,7 @@ jobs:
           EOF
 
       # ==========================================================
-      # INFO PLIST
+      # INFO.PLIST
       # ==========================================================
 
       - name: Create Info plist
@@ -879,10 +1016,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>1.1</string>
+              <string>1.2</string>
 
               <key>CFBundleVersion</key>
-              <string>11</string>
+              <string>12</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -917,6 +1054,7 @@ jobs:
               <true/>
 
               <key>UILaunchScreen</key>
+
               <dict/>
 
           </dict>
@@ -996,8 +1134,11 @@ jobs:
                   excludes:
 
                     - "test/**"
+
                     - "ui/**"
+
                     - "vulkan/**"
+
                     - "opengl/osmesa/**"
 
                 - path:
@@ -1006,6 +1147,7 @@ jobs:
                   excludes:
 
                     - "kvulkanSDL.cpp"
+
                     - "kvulkanSDL.h"
 
               settings:
@@ -1027,13 +1169,21 @@ jobs:
                   HEADER_SEARCH_PATHS:
 
                     - "$(SRCROOT)/IOSCompat"
+
                     - "$(SRCROOT)/Boxedwine/include"
+
                     - "$(SRCROOT)/Boxedwine/source"
+
                     - "$(SRCROOT)/Boxedwine/source/**"
+
                     - "$(SRCROOT)/Boxedwine/platform/sdl"
+
                     - "$(SRCROOT)/SDL2/include"
+
                     - "$(SRCROOT)/Vendor/include"
+
                     - "$(SRCROOT)/Vendor/include/minizip"
+
                     - "$(SRCROOT)/SIMDe"
 
                   LIBRARY_SEARCH_PATHS:
@@ -1046,17 +1196,20 @@ jobs:
 
                     - "BOXEDWINE_64=1"
 
-                    # Do NOT define BOXEDWINE_OPENGL here.
-                    # BoxedWine itself defines it.
-
                     - "BOXEDWINE_OPENGL_SDL=1"
+
                     - "BOXEDWINE_ES=1"
+
                     - "BOXEDWINE_ZLIB=1"
+
                     - "BOXEDWINE_DISABLE_UI=1"
+
                     - "BOXEDWINE_IOS_HOST=1"
 
                     - "SIMDE_NO_NATIVE=1"
+
                     - "SIMDE_NO_VECTOR=1"
+
                     - "SIMDE_NO_CHECK_IMMEDIATE_CONSTANT=1"
 
                     - "GLH=<IOSGLCompat.h>"
@@ -1064,25 +1217,37 @@ jobs:
                   OTHER_CFLAGS:
 
                     - "$(inherited)"
+
                     - "-Wno-error"
 
                   OTHER_CPLUSPLUSFLAGS:
 
                     - "$(inherited)"
+
                     - "-std=gnu++20"
+
                     - "-Wno-error"
+
                     - "-Wno-deprecated-declarations"
+
                     - "-Wno-unused-variable"
+
                     - "-Wno-unused-function"
+
                     - "-Wno-unused-private-field"
+
                     - "-Wno-c++11-narrowing"
 
                   OTHER_LDFLAGS:
 
                     - "$(inherited)"
+
                     - "-lSDL2"
+
                     - "-lminizip"
+
                     - "-lz"
+
                     - "-lc++"
 
               dependencies:
@@ -1140,9 +1305,7 @@ jobs:
       # ==========================================================
       # BUILD
       #
-      # IMPORTANT:
-      # We DO NOT fail this step immediately.
-      # First we save ALL compiler errors.
+      # Always continue to diagnostic step.
       # ==========================================================
 
       - name: Build iPhone BoxedWine
@@ -1191,17 +1354,10 @@ jobs:
             boxedwine-ios-build.log \
             || true
 
-          echo
-          echo "Build step finished."
-          echo "Diagnostic step is next."
-
-          # IMPORTANT:
-          # Always return success here so the next step
-          # can save the error report.
           exit 0
 
       # ==========================================================
-      # SAVE ALL ERRORS INTO REPOSITORY
+      # SAVE COMPLETE ERROR REPORT
       # ==========================================================
 
       - name: Save ALL compiler errors
@@ -1216,7 +1372,10 @@ jobs:
           echo "Compiler status: $STATUS"
 
           if [ "$STATUS" = "0" ]; then
-              echo "Build succeeded. No error report needed."
+
+              echo "Build succeeded."
+              echo "No error report required."
+
               exit 0
           fi
 
@@ -1245,36 +1404,34 @@ jobs:
               "ld:",
           )
 
-          errors = []
+          error_indexes = []
 
           for index, line in enumerate(lines):
-              low = line.lower()
+
+              lower = line.lower()
 
               if any(
-                  keyword in low
+                  keyword in lower
                   for keyword in keywords
               ):
-                  errors.append(index)
+                  error_indexes.append(
+                      index
+                  )
 
           selected = set()
 
-          for index in errors:
+          for index in error_indexes:
 
-              start = max(
-                  0,
-                  index - 10
-              )
-
-              end = min(
-                  len(lines),
-                  index + 12
-              )
-
-              for n in range(
-                  start,
-                  end
+              for number in range(
+                  max(0, index - 10),
+                  min(
+                      len(lines),
+                      index + 12
+                  )
               ):
-                  selected.add(n)
+                  selected.add(
+                      number
+                  )
 
           output = []
 
@@ -1291,7 +1448,8 @@ jobs:
           )
 
           output.append(
-              f"Detected error lines: {len(errors)}"
+              f"Detected error lines: "
+              f"{len(error_indexes)}"
           )
 
           output.append("")
@@ -1300,8 +1458,10 @@ jobs:
 
           for index in sorted(selected):
 
-              if index > previous + 1:
-
+              if (
+                  index
+                  > previous + 1
+              ):
                   output.append("")
                   output.append(
                       "-" * 70
@@ -1309,7 +1469,8 @@ jobs:
                   output.append("")
 
               output.append(
-                  f"{index + 1}: {lines[index]}"
+                  f"{index + 1}: "
+                  f"{lines[index]}"
               )
 
               previous = index
@@ -1331,16 +1492,18 @@ jobs:
 
           last = lines[-200:]
 
-          start_number = (
+          first_number = (
               len(lines)
               - len(last)
               + 1
           )
 
-          for offset, line in enumerate(last):
+          for offset, line in enumerate(
+              last
+          ):
 
               number = (
-                  start_number
+                  first_number
                   + offset
               )
 
@@ -1363,7 +1526,7 @@ jobs:
           PY
 
           echo
-          echo "===== SAVING LAST_ERRORS.txt ====="
+          echo "===== SAVE LAST_ERRORS.txt ====="
 
           git config \
             user.name \
@@ -1380,24 +1543,24 @@ jobs:
             --cached \
             --quiet
           then
-              echo "LAST_ERRORS.txt did not change."
+
+              echo \
+                "LAST_ERRORS.txt did not change."
+
           else
 
               git commit \
-                -m "Save latest BoxedWine iOS errors"
+                -m \
+                "Save latest BoxedWine iOS errors"
 
               git push \
                 origin \
                 HEAD:main
+
           fi
 
-          echo
-          echo "======================================"
-          echo "LAST_ERRORS.txt SAVED"
-          echo "======================================"
-
       # ==========================================================
-      # NOW FAIL THE JOB IF COMPILER FAILED
+      # CHECK RESULT
       # ==========================================================
 
       - name: Check BoxedWine build result
@@ -1412,7 +1575,7 @@ jobs:
               echo
               echo "======================================"
               echo "BOXEDWINE BUILD FAILED"
-              echo "Errors were saved to LAST_ERRORS.txt"
+              echo "Errors saved to LAST_ERRORS.txt"
               echo "======================================"
 
               exit "$STATUS"
@@ -1442,7 +1605,9 @@ jobs:
           )"
 
           if [ -z "$APP" ]; then
+
               echo "ERROR: app not found"
+
               exit 1
           fi
 
@@ -1457,7 +1622,7 @@ jobs:
             "$APP"
 
       # ==========================================================
-      # CREATE IPA
+      # IPA
       # ==========================================================
 
       - name: Create IPA
@@ -1508,8 +1673,10 @@ jobs:
             "$TAG" \
             POSTAL2-BoxedWine-iOS.ipa \
             --target "${GITHUB_SHA}" \
-            --title "POSTAL 2 iOS Build ${GITHUB_RUN_NUMBER}" \
-            --notes "Unsigned POSTAL 2 BoxedWine iOS runtime."
+            --title \
+            "POSTAL 2 iOS Build ${GITHUB_RUN_NUMBER}" \
+            --notes \
+            "Unsigned POSTAL 2 BoxedWine iOS runtime."
 
           {
               echo
@@ -1517,5 +1684,6 @@ jobs:
               echo
               echo "Открой Releases."
               echo
-              echo "Скачай POSTAL2-BoxedWine-iOS.ipa"
+              echo \
+                "Скачай POSTAL2-BoxedWine-iOS.ipa"
           } >> "$GITHUB_STEP_SUMMARY"
