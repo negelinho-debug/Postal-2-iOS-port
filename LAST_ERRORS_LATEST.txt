@@ -1,0 +1,94 @@
+POSTAL 2 iOS / BOXEDWINE
+GITHUB RUN: LAST_ERRORS_18
+COMPLETE COMPILER ERROR REPORT
+========================================================================
+Detected error lines: 4
+
+
+------------------------------------------------------------------------
+
+25:    80 |         std::printf(msg, args ...);
+26:       |                     ^
+27:       |                     "%s", 
+28: 2 warnings generated.
+29: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/ktimer.cpp:152:13: warning: code will never be executed [-Wunreachable-code]
+30:   152 |         if (numberOfExpirations > 0) {
+31:       |             ^~~~~~~~~~~~~~~~~~~
+32: 1 warning generated.
+33: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/kthread.cpp:1818:14: warning: code will never be executed [-Wunreachable-code]
+34:  1818 |         if (!foundWaitSignal && (KSystem::getMilliesSinceStart() - startTime) > ms) {
+35:       |              ^~~~~~~~~~~~~~~
+36: 1 warning generated.
+37: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/glfunctions_ext2.cpp:7010:90: error: use of undeclared identifier 'GL_TEXTURE_BORDER_COLOR'
+38:  7010 |     GL_FUNC(ext_glSamplerParameterIiv)(ARG1, ARG2, marshalArray<GLint>(cpu, ARG3, (ARG2==GL_TEXTURE_BORDER_COLOR)?4:1));
+39:       |                                                                                          ^~~~~~~~~~~~~~~~~~~~~~~
+40: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/glfunctions_ext2.cpp:7018:92: error: use of undeclared identifier 'GL_TEXTURE_BORDER_COLOR'
+41:  7018 |     GL_FUNC(ext_glSamplerParameterIuiv)(ARG1, ARG2, marshalArray<GLuint>(cpu, ARG3, (ARG2==GL_TEXTURE_BORDER_COLOR)?4:1));
+42:       |                                                                                            ^~~~~~~~~~~~~~~~~~~~~~~
+43: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/glfunctions_ext2.cpp:7034:91: error: use of undeclared identifier 'GL_TEXTURE_BORDER_COLOR'
+44:  7034 |     GL_FUNC(ext_glSamplerParameterfv)(ARG1, ARG2, marshalArray<GLfloat>(cpu, ARG3, (ARG2==GL_TEXTURE_BORDER_COLOR)?4:1));
+45:       |                                                                                           ^~~~~~~~~~~~~~~~~~~~~~~
+46: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/glfunctions_ext2.cpp:7050:89: error: use of undeclared identifier 'GL_TEXTURE_BORDER_COLOR'
+47:  7050 |     GL_FUNC(ext_glSamplerParameteriv)(ARG1, ARG2, marshalArray<GLint>(cpu, ARG3, (ARG2==GL_TEXTURE_BORDER_COLOR)?4:1));
+48:       |                                                                                         ^~~~~~~~~~~~~~~~~~~~~~~
+49: 4 errors generated.
+50: note: Using codesigning identity override: 
+51: ** BUILD FAILED **
+52: 
+
+========================================================================
+LAST 300 RAW BUILD LINES
+========================================================================
+
+1: 2026-08-25 20:18:51.253 xcodebuild[5130:18987] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
+2: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:72:21: warning: format string is not a string literal (potentially insecure) [-Wformat-security]
+3:    72 |         std::printf(msg, args ...);
+4:       |                     ^~~
+5: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:419:9: note: in instantiation of function template specialization 'sysLog<>' requested here
+6:   419 |         SYS_LOG(SYSCALL_MEMORY, cpu, " result=0(0x0)\n");
+7:       |         ^
+8: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:91:34: note: expanded from macro 'SYS_LOG'
+9:    91 | #define SYS_LOG if (syscallMask) sysLog
+10:       |                                  ^
+11: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:72:21: note: treat the string as an argument to avoid this
+12:    72 |         std::printf(msg, args ...);
+13:       |                     ^
+14:       |                     "%s", 
+15: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:80:21: warning: format string is not a string literal (potentially insecure) [-Wformat-security]
+16:    80 |         std::printf(msg, args ...);
+17:       |                     ^~~
+18: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:1863:5: note: in instantiation of function template specialization 'sysLog1<>' requested here
+19:  1863 |     SYS_LOG1(SYSCALL_FILE, cpu, "inotify_init:");
+20:       |     ^
+21: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:92:35: note: expanded from macro 'SYS_LOG1'
+22:    92 | #define SYS_LOG1 if (syscallMask) sysLog1
+23:       |                                   ^
+24: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:80:21: note: treat the string as an argument to avoid this
+25:    80 |         std::printf(msg, args ...);
+26:       |                     ^
+27:       |                     "%s", 
+28: 2 warnings generated.
+29: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/ktimer.cpp:152:13: warning: code will never be executed [-Wunreachable-code]
+30:   152 |         if (numberOfExpirations > 0) {
+31:       |             ^~~~~~~~~~~~~~~~~~~
+32: 1 warning generated.
+33: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/kthread.cpp:1818:14: warning: code will never be executed [-Wunreachable-code]
+34:  1818 |         if (!foundWaitSignal && (KSystem::getMilliesSinceStart() - startTime) > ms) {
+35:       |              ^~~~~~~~~~~~~~~
+36: 1 warning generated.
+37: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/glfunctions_ext2.cpp:7010:90: error: use of undeclared identifier 'GL_TEXTURE_BORDER_COLOR'
+38:  7010 |     GL_FUNC(ext_glSamplerParameterIiv)(ARG1, ARG2, marshalArray<GLint>(cpu, ARG3, (ARG2==GL_TEXTURE_BORDER_COLOR)?4:1));
+39:       |                                                                                          ^~~~~~~~~~~~~~~~~~~~~~~
+40: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/glfunctions_ext2.cpp:7018:92: error: use of undeclared identifier 'GL_TEXTURE_BORDER_COLOR'
+41:  7018 |     GL_FUNC(ext_glSamplerParameterIuiv)(ARG1, ARG2, marshalArray<GLuint>(cpu, ARG3, (ARG2==GL_TEXTURE_BORDER_COLOR)?4:1));
+42:       |                                                                                            ^~~~~~~~~~~~~~~~~~~~~~~
+43: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/glfunctions_ext2.cpp:7034:91: error: use of undeclared identifier 'GL_TEXTURE_BORDER_COLOR'
+44:  7034 |     GL_FUNC(ext_glSamplerParameterfv)(ARG1, ARG2, marshalArray<GLfloat>(cpu, ARG3, (ARG2==GL_TEXTURE_BORDER_COLOR)?4:1));
+45:       |                                                                                           ^~~~~~~~~~~~~~~~~~~~~~~
+46: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/glfunctions_ext2.cpp:7050:89: error: use of undeclared identifier 'GL_TEXTURE_BORDER_COLOR'
+47:  7050 |     GL_FUNC(ext_glSamplerParameteriv)(ARG1, ARG2, marshalArray<GLint>(cpu, ARG3, (ARG2==GL_TEXTURE_BORDER_COLOR)?4:1));
+48:       |                                                                                         ^~~~~~~~~~~~~~~~~~~~~~~
+49: 4 errors generated.
+50: note: Using codesigning identity override: 
+51: ** BUILD FAILED **
+52: 
