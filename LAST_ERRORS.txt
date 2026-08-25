@@ -1,0 +1,139 @@
+POSTAL 2 iOS / BOXEDWINE
+COMPLETE COMPILER ERROR REPORT
+======================================================================
+Detected error lines: 8
+
+
+----------------------------------------------------------------------
+
+19:  1863 |     SYS_LOG1(SYSCALL_FILE, cpu, "inotify_init:");
+20:       |     ^
+21: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:92:35: note: expanded from macro 'SYS_LOG1'
+22:    92 | #define SYS_LOG1 if (syscallMask) sysLog1
+23:       |                                   ^
+24: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:80:21: note: treat the string as an argument to avoid this
+25:    80 |         std::printf(msg, args ...);
+26:       |                     ^
+27:       |                     "%s", 
+28: 2 warnings generated.
+29: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:41:26: error: expected ')'
+30:    41 | typedef void (GLAPIENTRY *pfnglFinish)();
+31:       |                          ^
+32: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:41:14: note: to match this '('
+33:    41 | typedef void (GLAPIENTRY *pfnglFinish)();
+34:       |              ^
+35: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:42:26: error: expected ')'
+36:    42 | typedef void (GLAPIENTRY *pfnglFlush)();
+37:       |                          ^
+38: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:42:14: note: to match this '('
+39:    42 | typedef void (GLAPIENTRY *pfnglFlush)();
+40:       |              ^
+41: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:44:8: error: unknown type name 'pfnglFinish'
+42:    44 | static pfnglFinish pglFinish;
+43:       |        ^
+44: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:45:8: error: unknown type name 'pfnglFlush'
+45:    45 | static pfnglFlush pglFlush;
+46:       |        ^
+47: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:764:18: error: use of undeclared identifier 'pfnglFinish'; did you mean 'pglFinish'?
+48:   764 |     pglFinish = (pfnglFinish)SDL_GL_GetProcAddress("glFinish");
+49:       |                  ^~~~~~~~~~~
+50:       |                  pglFinish
+51: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:44:20: note: 'pglFinish' declared here
+52:    44 | static pfnglFinish pglFinish;
+53:       |                    ^
+54: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:764:30: error: expected ';' after expression
+55:   764 |     pglFinish = (pfnglFinish)SDL_GL_GetProcAddress("glFinish");
+56:       |                              ^
+57:       |                              ;
+58: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:765:17: error: use of undeclared identifier 'pfnglFlush'; did you mean 'pglFlush'?
+59:   765 |     pglFlush = (pfnglFlush)SDL_GL_GetProcAddress("glFlush");
+60:       |                 ^~~~~~~~~~
+61:       |                 pglFlush
+62: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:45:19: note: 'pglFlush' declared here
+63:    45 | static pfnglFlush pglFlush;
+64:       |                   ^
+65: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:765:28: error: expected ';' after expression
+66:   765 |     pglFlush = (pfnglFlush)SDL_GL_GetProcAddress("glFlush");
+67:       |                            ^
+68:       |                            ;
+69: 8 errors generated.
+70: note: Using codesigning identity override: 
+71: ** BUILD FAILED **
+72: 
+
+======================================================================
+LAST 200 RAW BUILD LINES
+======================================================================
+
+1: 2026-08-25 16:59:16.611 xcodebuild[3278:13075] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
+2: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:72:21: warning: format string is not a string literal (potentially insecure) [-Wformat-security]
+3:    72 |         std::printf(msg, args ...);
+4:       |                     ^~~
+5: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:419:9: note: in instantiation of function template specialization 'sysLog<>' requested here
+6:   419 |         SYS_LOG(SYSCALL_MEMORY, cpu, " result=0(0x0)\n");
+7:       |         ^
+8: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:91:34: note: expanded from macro 'SYS_LOG'
+9:    91 | #define SYS_LOG if (syscallMask) sysLog
+10:       |                                  ^
+11: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:72:21: note: treat the string as an argument to avoid this
+12:    72 |         std::printf(msg, args ...);
+13:       |                     ^
+14:       |                     "%s", 
+15: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:80:21: warning: format string is not a string literal (potentially insecure) [-Wformat-security]
+16:    80 |         std::printf(msg, args ...);
+17:       |                     ^~~
+18: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:1863:5: note: in instantiation of function template specialization 'sysLog1<>' requested here
+19:  1863 |     SYS_LOG1(SYSCALL_FILE, cpu, "inotify_init:");
+20:       |     ^
+21: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:92:35: note: expanded from macro 'SYS_LOG1'
+22:    92 | #define SYS_LOG1 if (syscallMask) sysLog1
+23:       |                                   ^
+24: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/kernel/syscall.cpp:80:21: note: treat the string as an argument to avoid this
+25:    80 |         std::printf(msg, args ...);
+26:       |                     ^
+27:       |                     "%s", 
+28: 2 warnings generated.
+29: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:41:26: error: expected ')'
+30:    41 | typedef void (GLAPIENTRY *pfnglFinish)();
+31:       |                          ^
+32: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:41:14: note: to match this '('
+33:    41 | typedef void (GLAPIENTRY *pfnglFinish)();
+34:       |              ^
+35: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:42:26: error: expected ')'
+36:    42 | typedef void (GLAPIENTRY *pfnglFlush)();
+37:       |                          ^
+38: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:42:14: note: to match this '('
+39:    42 | typedef void (GLAPIENTRY *pfnglFlush)();
+40:       |              ^
+41: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:44:8: error: unknown type name 'pfnglFinish'
+42:    44 | static pfnglFinish pglFinish;
+43:       |        ^
+44: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:45:8: error: unknown type name 'pfnglFlush'
+45:    45 | static pfnglFlush pglFlush;
+46:       |        ^
+47: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:764:18: error: use of undeclared identifier 'pfnglFinish'; did you mean 'pglFinish'?
+48:   764 |     pglFinish = (pfnglFinish)SDL_GL_GetProcAddress("glFinish");
+49:       |                  ^~~~~~~~~~~
+50:       |                  pglFinish
+51: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:44:20: note: 'pglFinish' declared here
+52:    44 | static pfnglFinish pglFinish;
+53:       |                    ^
+54: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:764:30: error: expected ';' after expression
+55:   764 |     pglFinish = (pfnglFinish)SDL_GL_GetProcAddress("glFinish");
+56:       |                              ^
+57:       |                              ;
+58: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:765:17: error: use of undeclared identifier 'pfnglFlush'; did you mean 'pglFlush'?
+59:   765 |     pglFlush = (pfnglFlush)SDL_GL_GetProcAddress("glFlush");
+60:       |                 ^~~~~~~~~~
+61:       |                 pglFlush
+62: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:45:19: note: 'pglFlush' declared here
+63:    45 | static pfnglFlush pglFlush;
+64:       |                   ^
+65: /Users/runner/work/Postal-2-iOS-port/Postal-2-iOS-port/Boxedwine/source/opengl/sdl/sdlgl.cpp:765:28: error: expected ';' after expression
+66:   765 |     pglFlush = (pfnglFlush)SDL_GL_GetProcAddress("glFlush");
+67:       |                            ^
+68:       |                            ;
+69: 8 errors generated.
+70: note: Using codesigning identity override: 
+71: ** BUILD FAILED **
+72: 
