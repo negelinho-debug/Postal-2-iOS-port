@@ -16,12 +16,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ==========================================================
+      # TOOLS
+      # ==========================================================
+
       - name: Install tools
         run: |
           set -e
+
           brew install xcodegen
+
+          echo "===== XCODE ====="
           xcodebuild -version
+
+          echo "===== XCODEGEN ====="
           xcodegen --version
+
+          echo "===== IPHONE SDK ====="
           xcrun --sdk iphoneos --show-sdk-version
 
       # ==========================================================
@@ -39,18 +50,32 @@ jobs:
             https://github.com/danoon2/Boxedwine.git \
             Boxedwine
 
-          test -f Boxedwine/source/sdl/main.cpp
-          test -f Boxedwine/source/opengl/sdl/sdlgl.cpp
-          test -f Boxedwine/source/opengl/glcommon.h
-          test -f Boxedwine/platform/sdl/knativesystem.cpp
-
           echo "===== BOXEDWINE ====="
 
           cd Boxedwine
           git rev-parse HEAD
+          cd ..
+
+          test -f \
+            Boxedwine/source/sdl/main.cpp
+
+          test -f \
+            Boxedwine/source/util/networkutils.cpp
+
+          test -f \
+            Boxedwine/source/util/networkutils.h
+
+          test -f \
+            Boxedwine/source/opengl/glcommon.h
+
+          test -f \
+            Boxedwine/source/opengl/sdl/sdlgl.cpp
+
+          test -f \
+            Boxedwine/platform/sdl/knativesystem.cpp
 
       # ==========================================================
-      # BHASHTABLE FIX
+      # BHASHTABLE APPLE CLANG FIX
       # ==========================================================
 
       - name: Patch BHashTable
@@ -94,6 +119,73 @@ jobs:
           PY
 
       # ==========================================================
+      # CURL FIX
+      #
+      # BoxedWine normally uses libcurl on non-Windows hosts.
+      # We don't need its downloader for our iOS runtime because
+      # Wine.zip + postal2 are local files.
+      #
+      # This completely removes curl/curl.h from the iOS build.
+      # ==========================================================
+
+      - name: Disable BoxedWine network downloader on iOS
+        run: |
+          set -e
+
+          cat > \
+            Boxedwine/source/util/networkutils.cpp \
+            <<'EOF'
+          /*
+           * iOS local-runtime replacement for BoxedWine
+           * networkutils.cpp.
+           *
+           * POSTAL 2 and Wine are supplied locally, so the
+           * BoxedWine HTTP downloader is not required.
+           */
+
+          #include "boxedwine.h"
+          #include "networkutils.h"
+
+          bool downloadFile(
+              BString url,
+              BString filePath,
+              std::function<void(U64 bytesCompleted)> f,
+              NetworkProxy* proxy,
+              BString& errorMsg,
+              bool* cancel
+          ) {
+              (void)url;
+              (void)filePath;
+              (void)f;
+              (void)proxy;
+              (void)cancel;
+
+              errorMsg = BString::copy(
+                  "Network downloader disabled in iOS runtime"
+              );
+
+              return false;
+          }
+          EOF
+
+          echo "===== NETWORKUTILS IOS ====="
+
+          cat \
+            Boxedwine/source/util/networkutils.cpp
+
+          if grep \
+            -q \
+            "curl/curl.h" \
+            Boxedwine/source/util/networkutils.cpp
+          then
+              echo "ERROR: curl still present"
+              exit 1
+          fi
+
+          echo
+          echo "CURL REMOVED FROM IOS BUILD"
+
+      # ==========================================================
       # SIMDE
       # ==========================================================
 
@@ -114,6 +206,12 @@ jobs:
 
           test -f \
             SIMDe/simde/x86/sse2.h
+
+          echo "===== SIMDE ====="
+
+          cd SIMDe
+          git describe --tags --always
+          cd ..
 
       # ==========================================================
       # SIMDE XCODE FIX
@@ -229,10 +327,12 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             SYMROOT="$PWD/sdlbuild" \
             build \
-            2>&1 | tee sdl-build.log
+            2>&1 \
+            | tee sdl-build.log
 
           SDL_LIB="$(
-            find sdlbuild \
+            find \
+              sdlbuild \
               -type f \
               -name 'libSDL2.a' \
               | head -1
@@ -240,11 +340,10 @@ jobs:
 
           if [ -z "$SDL_LIB" ]; then
 
-            echo \
-              "ERROR: libSDL2.a not found"
+              echo \
+                "ERROR: libSDL2.a not found"
 
-            exit 1
-
+              exit 1
           fi
 
           mkdir -p \
@@ -261,10 +360,6 @@ jobs:
 
       # ==========================================================
       # OPENGL COMPATIBILITY
-      #
-      # CURRENT FIX:
-      #
-      # GLAPIENTRY -> APIENTRY
       # ==========================================================
 
       - name: Create OpenGL compatibility headers
@@ -307,17 +402,10 @@ jobs:
 
           #include <SDL_opengles2.h>
 
-          /*
-           * BoxedWine desktop GL code expects GLAPIENTRY.
-           * SDL/OpenGLES on iPhone exposes APIENTRY.
-           */
           #ifndef GLAPIENTRY
           #define GLAPIENTRY APIENTRY
           #endif
 
-          /*
-           * Desktop OpenGL double types are absent in GLES2.
-           */
           #ifndef GLdouble
           typedef double GLdouble;
           #endif
@@ -326,28 +414,27 @@ jobs:
           typedef double GLclampd;
           #endif
 
-          /*
-           * Desktop ARB/EXT declarations.
-           */
           #include <GL/glext.h>
 
           #endif
           EOF
 
-          echo "===== IOSGLCompat.h ====="
+          echo "===== IOS GL COMPAT ====="
 
           cat \
             IOSCompat/IOSGLCompat.h
 
       # ==========================================================
-      # TEST THE EXACT PREVIOUS GLAPIENTRY ERROR
+      # TEST PREVIOUS OPENGL PROBLEMS BEFORE BIG BUILD
       # ==========================================================
 
       - name: Test OpenGL compatibility
         run: |
           set -e
 
-          cat > /tmp/glcompat-test.cpp <<'EOF'
+          cat > \
+            /tmp/glcompat-test.cpp \
+            <<'EOF'
           #include <IOSGLCompat.h>
 
           GLdouble a = 0.0;
@@ -382,7 +469,6 @@ jobs:
               (void)b;
               (void)c;
               (void)d;
-
               (void)e;
               (void)f;
               (void)g;
@@ -420,11 +506,10 @@ jobs:
           echo
           echo "======================================"
           echo "OPENGL COMPAT TEST PASSED"
-          echo "GLAPIENTRY TEST PASSED"
           echo "======================================"
 
       # ==========================================================
-      # BOXEDWINE GLCOMMON
+      # BOXEDWINE GL COMMON
       # ==========================================================
 
       - name: Patch BoxedWine GL common header
@@ -496,15 +581,13 @@ jobs:
 
           s = p.read_text()
 
-          # iOS defines __APPLE__, but these BoxedWine branches
-          # are for macOS/CGL only.
+          # iOS also defines __APPLE__, but these branches
+          # in BoxedWine are for macOS/CGL.
 
           s = s.replace(
               "#ifdef __APPLE__",
               "#if defined(__APPLE__) && TARGET_OS_OSX"
           )
-
-          # TARGET_OS_OSX is provided by TargetConditionals.
 
           if (
               "#include <TargetConditionals.h>"
@@ -533,15 +616,10 @@ jobs:
                   1
               )
 
-          # Replace desktop SDL OpenGL with our compatibility
-          # header backed by OpenGL ES.
-
           s = s.replace(
               "#include <SDL_opengl.h>",
               "#include <IOSGLCompat.h>"
           )
-
-          # Force SDL to create an OpenGL ES 2 context.
 
           reset = (
               "    SDL_GL_ResetAttributes();"
@@ -582,49 +660,6 @@ jobs:
                   1
               )
 
-          # Do not switch an ES context back to desktop CORE.
-
-          old = """    if (major) {
-                  if (major >= 3) {
-                      SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-                  }
-                  //#ifdef BOXEDWINE_MSVC
-                  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, major);
-                  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
-                  //#endif
-              }"""
-
-          new = """#ifndef BOXEDWINE_ES
-              if (major) {
-
-                  if (major >= 3) {
-
-                      SDL_GL_SetAttribute(
-                          SDL_GL_CONTEXT_PROFILE_MASK,
-                          SDL_GL_CONTEXT_PROFILE_CORE
-                      );
-                  }
-
-                  SDL_GL_SetAttribute(
-                      SDL_GL_CONTEXT_MAJOR_VERSION,
-                      major
-                  );
-
-                  SDL_GL_SetAttribute(
-                      SDL_GL_CONTEXT_MINOR_VERSION,
-                      minor
-                  );
-              }
-          #endif"""
-
-          if old in s:
-
-              s = s.replace(
-                  old,
-                  new,
-                  1
-              )
-
           p.write_text(s)
 
           print(
@@ -632,16 +667,17 @@ jobs:
           )
           PY
 
-          echo "===== SDLGL PATCH CHECK ====="
+          echo "===== SDLGL CHECK ====="
 
           grep \
             -n \
-            -E "IOSGLCompat|TARGET_OS_OSX|SDL_GL_CONTEXT_PROFILE_ES" \
+            -E \
+            "IOSGLCompat|TARGET_OS_OSX|SDL_GL_CONTEXT_PROFILE_ES" \
             Boxedwine/source/opengl/sdl/sdlgl.cpp \
             | head -30
 
       # ==========================================================
-      # DISABLE DEFAULT MAIN
+      # DISABLE BOXEDWINE DEFAULT MAIN
       # ==========================================================
 
       - name: Disable BoxedWine default main
@@ -736,17 +772,17 @@ jobs:
             mztools.c
           do
 
-            "$CC" \
-              -c \
-              -O3 \
-              -arch arm64 \
-              -isysroot "$SDK" \
-              -miphoneos-version-min=15.0 \
-              -Izlib-src \
-              -Izlib-src/contrib/minizip \
-              "zlib-src/contrib/minizip/$SRC" \
-              -o \
-              "minizip-build/${SRC%.c}.o"
+              "$CC" \
+                -c \
+                -O3 \
+                -arch arm64 \
+                -isysroot "$SDK" \
+                -miphoneos-version-min=15.0 \
+                -Izlib-src \
+                -Izlib-src/contrib/minizip \
+                "zlib-src/contrib/minizip/$SRC" \
+                -o \
+                "minizip-build/${SRC%.c}.o"
 
           done
 
@@ -769,7 +805,8 @@ jobs:
         run: |
           set -e
 
-          mkdir -p IOSHost
+          mkdir -p \
+            IOSHost
 
           cat > IOSHost/main.mm <<'EOF'
           #import <Foundation/Foundation.h>
@@ -853,10 +890,15 @@ jobs:
                           candidates = {
 
                           docs + "/Wine-5.0.zip",
+
                           docs + "/Wine-6.0.zip",
+
                           docs + "/Wine-7.0.zip",
+
                           docs + "/Wine-9.0.zip",
+
                           docs + "/Wine-10.0.zip",
+
                           docs + "/Wine-11.0.zip"
                       };
 
@@ -991,7 +1033,7 @@ jobs:
           EOF
 
       # ==========================================================
-      # INFO.PLIST
+      # INFO PLIST
       # ==========================================================
 
       - name: Create Info plist
@@ -1025,10 +1067,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>1.3</string>
+              <string>1.4</string>
 
               <key>CFBundleVersion</key>
-              <string>13</string>
+              <string>14</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -1063,7 +1105,6 @@ jobs:
               <true/>
 
               <key>UILaunchScreen</key>
-
               <dict/>
 
           </dict>
@@ -1305,7 +1346,7 @@ jobs:
       # BUILD
       #
       # Do not fail immediately:
-      # first save ALL errors.
+      # first collect all compiler errors.
       # ==========================================================
 
       - name: Build iPhone BoxedWine
@@ -1372,10 +1413,10 @@ jobs:
 
           if [ "$STATUS" = "0" ]; then
 
-            echo \
-              "Build succeeded. No error report needed."
+              echo \
+                "Build succeeded. No error report needed."
 
-            exit 0
+              exit 0
 
           fi
 
@@ -1400,12 +1441,8 @@ jobs:
           )
 
           indexes = [
-
               i
-
-              for i, line
-              in enumerate(lines)
-
+              for i, line in enumerate(lines)
               if any(
                   keyword in line.lower()
                   for keyword in keywords
@@ -1417,29 +1454,23 @@ jobs:
           for i in indexes:
 
               selected.update(
-
                   range(
                       max(
                           0,
-                          i - 10
+                          i - 12
                       ),
                       min(
                           len(lines),
-                          i + 12
+                          i + 14
                       )
                   )
               )
 
           out = [
-
               "POSTAL 2 iOS / BOXEDWINE",
-
               "COMPLETE COMPILER ERROR REPORT",
-
               "=" * 70,
-
               f"Detected error lines: {len(indexes)}",
-
               ""
           ]
 
@@ -1450,16 +1481,13 @@ jobs:
           ):
 
               if (
-                  i
-                  > previous + 1
+                  i >
+                  previous + 1
               ):
 
                   out += [
-
                       "",
-
                       "-" * 70,
-
                       ""
                   ]
 
@@ -1470,19 +1498,14 @@ jobs:
               previous = i
 
           out += [
-
               "",
-
               "=" * 70,
-
-              "LAST 200 RAW BUILD LINES",
-
+              "LAST 250 RAW BUILD LINES",
               "=" * 70,
-
               ""
           ]
 
-          tail = lines[-200:]
+          tail = lines[-250:]
 
           start = (
               len(lines)
@@ -1491,9 +1514,7 @@ jobs:
           )
 
           out.extend(
-
               f"{start + offset}: {line}"
-
               for offset, line
               in enumerate(tail)
           )
@@ -1501,7 +1522,6 @@ jobs:
           Path(
               "LAST_ERRORS.txt"
           ).write_text(
-
               "\n".join(out)
               + "\n"
           )
@@ -1530,18 +1550,18 @@ jobs:
             --quiet
           then
 
-            git commit \
-              -m \
-              "Save latest BoxedWine iOS errors"
+              git commit \
+                -m \
+                "Save latest BoxedWine iOS errors"
 
-            git push \
-              origin \
-              HEAD:main
+              git push \
+                origin \
+                HEAD:main
 
           fi
 
       # ==========================================================
-      # FAIL ONLY AFTER SAVING ERRORS
+      # CHECK RESULT
       # ==========================================================
 
       - name: Check BoxedWine build result
@@ -1553,13 +1573,13 @@ jobs:
 
           if [ "$STATUS" != "0" ]; then
 
-            echo
-            echo "======================================"
-            echo "BOXEDWINE BUILD FAILED"
-            echo "Errors saved to LAST_ERRORS.txt"
-            echo "======================================"
+              echo
+              echo "======================================"
+              echo "BOXEDWINE BUILD FAILED"
+              echo "Errors saved to LAST_ERRORS.txt"
+              echo "======================================"
 
-            exit "$STATUS"
+              exit "$STATUS"
 
           fi
 
@@ -1569,7 +1589,7 @@ jobs:
           echo "======================================"
 
       # ==========================================================
-      # APP
+      # FIND APP
       # ==========================================================
 
       - name: Find app
@@ -1587,11 +1607,10 @@ jobs:
 
           if [ -z "$APP" ]; then
 
-            echo \
-              "ERROR: app not found"
+              echo \
+                "ERROR: app not found"
 
-            exit 1
-
+              exit 1
           fi
 
           echo \
@@ -1613,9 +1632,11 @@ jobs:
         run: |
           set -e
 
-          rm -rf Payload
+          rm -rf \
+            Payload
 
-          mkdir Payload
+          mkdir \
+            Payload
 
           cp \
             -R \
@@ -1641,7 +1662,6 @@ jobs:
       # ==========================================================
 
       - name: Publish IPA to Releases
-
         env:
 
           GH_TOKEN:
@@ -1651,6 +1671,9 @@ jobs:
           set -e
 
           TAG="postal2-ios-${GITHUB_RUN_NUMBER}"
+
+          echo "===== RELEASE ====="
+          echo "$TAG"
 
           gh release create \
             "$TAG" \
@@ -1662,10 +1685,11 @@ jobs:
             "Unsigned POSTAL 2 BoxedWine iOS runtime."
 
           {
-            echo
-            echo "# ✅ POSTAL 2 IPA READY"
-            echo
-            echo "Открой Releases."
-            echo
-            echo "Скачай POSTAL2-BoxedWine-iOS.ipa"
+              echo
+              echo "# ✅ POSTAL 2 IPA READY"
+              echo
+              echo "Открой Releases."
+              echo
+              echo \
+                "Скачай POSTAL2-BoxedWine-iOS.ipa"
           } >> "$GITHUB_STEP_SUMMARY"
