@@ -13,6 +13,10 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      # ==========================================================
+      # CHECKOUT
+      # ==========================================================
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -50,92 +54,179 @@ jobs:
             https://github.com/danoon2/Boxedwine.git \
             Boxedwine
 
-          echo "===== BOXEDWINE ====="
+          echo "===== BOXEDWINE COMMIT ====="
 
-          cd Boxedwine
-          git rev-parse HEAD
-          cd ..
+          (
+            cd Boxedwine
+            git rev-parse HEAD
+          )
 
           test -f Boxedwine/source/sdl/main.cpp
           test -f Boxedwine/source/util/networkutils.cpp
+          test -f Boxedwine/source/util/networkutils.h
           test -f Boxedwine/source/util/bhashtable.h
+
           test -f Boxedwine/source/opengl/glcommon.h
           test -f Boxedwine/source/opengl/glMarshal.h
+
           test -f Boxedwine/source/opengl/es/esopengl.c
+          test -f Boxedwine/source/opengl/es/esdisplaylist.c
+          test -f Boxedwine/source/opengl/es/esdisplaylist.h
+
           test -f Boxedwine/source/opengl/sdl/sdlgl.cpp
+
           test -f Boxedwine/platform/sdl/knativesystem.cpp
 
       # ==========================================================
-      # NEW RUN #20 FIX
+      # KALLOC
       #
-      # Current BoxedWine master still has:
+      # esdisplaylist.c really uses:
       #
-      #   #include "kalloc.h"
+      # kalloc(sizeof(struct ListOp))
       #
-      # inside esopengl.c, although that header no longer exists
-      # in the current source tree and esopengl.c doesn't use it.
+      # so create a small compatible implementation for iPhone.
+      # calloc is used so new memory starts zeroed.
       # ==========================================================
 
-      - name: Remove obsolete kalloc include
+      - name: Create iOS kalloc compatibility
         run: |
           set -e
 
-          FILE="Boxedwine/source/opengl/es/esopengl.c"
+          mkdir -p \
+            Boxedwine/include
 
-          echo "===== BEFORE ====="
+          cat > Boxedwine/include/kalloc.h <<'EOF'
+          #ifndef BOXEDWINE_IOS_KALLOC_H
+          #define BOXEDWINE_IOS_KALLOC_H
 
-          grep \
-            -n \
-            'kalloc.h' \
-            "$FILE" \
-            || true
+          #include <stddef.h>
+          #include <stdlib.h>
 
-          python3 - <<'PY'
-          from pathlib import Path
+          #ifdef __cplusplus
+          extern "C" {
+          #endif
 
-          path = Path(
-              "Boxedwine/source/opengl/es/esopengl.c"
-          )
+          static inline void* kalloc(
+              size_t size
+          ) {
+              return calloc(
+                  1,
+                  size
+              );
+          }
 
-          text = path.read_text()
+          static inline void kfree(
+              void* pointer
+          ) {
+              free(
+                  pointer
+              );
+          }
 
-          old = '#include "kalloc.h"\n'
+          static inline void* krealloc(
+              void* pointer,
+              size_t size
+          ) {
+              return realloc(
+                  pointer,
+                  size
+              );
+          }
 
-          if old in text:
-              text = text.replace(
-                  old,
-                  "",
-                  1
-              )
+          #ifdef __cplusplus
+          }
+          #endif
 
-              path.write_text(text)
+          #endif
+          EOF
 
-              print(
-                  "Removed obsolete kalloc.h include"
-              )
+          echo "===== KALLOC.H ====="
 
-          else:
-              print(
-                  "kalloc.h include already absent"
-              )
-          PY
+          cat \
+            Boxedwine/include/kalloc.h
+
+          test -s \
+            Boxedwine/include/kalloc.h
 
           echo
-          echo "===== AFTER ====="
+          echo "===== BOXEDWINE KALLOC REFERENCES ====="
 
-          if grep \
-            -q \
-            'kalloc.h' \
-            "$FILE"
-          then
-              echo "ERROR: kalloc.h still present"
-              exit 1
-          fi
-
-          echo "KALLOC FIX PASSED"
+          grep \
+            -R \
+            -n \
+            -E 'kalloc\.h|kalloc\(|kfree\(|krealloc\(' \
+            Boxedwine/source/opengl/es \
+            || true
 
       # ==========================================================
-      # BHASHTABLE
+      # TEST KALLOC NOW
+      # ==========================================================
+
+      - name: Test iOS kalloc compatibility
+        run: |
+          set -e
+
+          cat > /tmp/kalloc-test.c <<'EOF'
+          #include "kalloc.h"
+
+          struct TestObject {
+              int value;
+              void* next;
+          };
+
+          int main(void) {
+              struct TestObject* object =
+                  (struct TestObject*)kalloc(
+                      sizeof(struct TestObject)
+                  );
+
+              if (!object) {
+                  return 1;
+              }
+
+              if (object->value != 0) {
+                  return 2;
+              }
+
+              object = (struct TestObject*)krealloc(
+                  object,
+                  sizeof(struct TestObject) * 2
+              );
+
+              if (!object) {
+                  return 3;
+              }
+
+              kfree(object);
+
+              return 0;
+          }
+          EOF
+
+          SDK="$(
+            xcrun \
+              --sdk iphoneos \
+              --show-sdk-path
+          )"
+
+          CC="$(
+            xcrun \
+              --sdk iphoneos \
+              -f clang
+          )"
+
+          "$CC" \
+            -fsyntax-only \
+            -arch arm64 \
+            -isysroot "$SDK" \
+            -miphoneos-version-min=15.0 \
+            -IBoxedwine/include \
+            /tmp/kalloc-test.c
+
+          echo "===== KALLOC TEST PASSED ====="
+
+      # ==========================================================
+      # BHASHTABLE APPLE CLANG FIX
       # ==========================================================
 
       - name: Patch BHashTable
@@ -175,13 +266,13 @@ jobs:
 
               path.write_text(text)
 
-          print(
-              "BHashTable patch OK"
-          )
+          print("BHashTable patch OK")
           PY
 
       # ==========================================================
       # DISABLE CURL
+      #
+      # Game + Wine will be supplied locally.
       # ==========================================================
 
       - name: Disable BoxedWine downloader on iOS
@@ -223,7 +314,7 @@ jobs:
               exit 1
           fi
 
-          echo "CURL disabled"
+          echo "CURL DISABLED"
 
       # ==========================================================
       # SIMDE
@@ -243,6 +334,17 @@ jobs:
 
           test -f SIMDe/simde/x86/sse.h
           test -f SIMDe/simde/x86/sse2.h
+
+          echo "===== SIMDE ====="
+
+          (
+            cd SIMDe
+            git describe --tags --always
+          )
+
+      # ==========================================================
+      # SIMDE APPLE CLANG FIX
+      # ==========================================================
 
       - name: Patch SIMDe
         run: |
@@ -295,7 +397,7 @@ jobs:
 
               if broken not in block:
                   raise SystemExit(
-                      "SIMDe branch not found"
+                      "SIMDe problematic branch not found"
                   )
 
               block = block.replace(
@@ -312,9 +414,7 @@ jobs:
 
               path.write_text(text)
 
-          print(
-              "SIMDe patch OK"
-          )
+          print("SIMDe patch OK")
           PY
 
       # ==========================================================
@@ -378,16 +478,13 @@ jobs:
             "$SDL_LIB" \
             "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
 
-          echo "===== SDL2 ====="
+          echo "===== SDL2 LIBRARY ====="
 
           file \
             "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
 
       # ==========================================================
-      # COMPLETE OPENGL COMPATIBILITY
-      #
-      # Generate classic desktop GL constants automatically,
-      # rather than adding GL_* names one by one.
+      # OPENGL COMPATIBILITY
       # ==========================================================
 
       - name: Create complete OpenGL compatibility layer
@@ -400,7 +497,7 @@ jobs:
             IOSCompat/GL \
             IOSCompat/KHR
 
-          echo "===== DOWNLOAD glext.h ====="
+          echo "===== DOWNLOAD GLEXT ====="
 
           curl \
             --fail \
@@ -409,7 +506,7 @@ jobs:
             https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/main/api/GL/glext.h \
             -o IOSCompat/GL/glext.h
 
-          echo "===== DOWNLOAD khrplatform.h ====="
+          echo "===== DOWNLOAD KHRPLATFORM ====="
 
           curl \
             --fail \
@@ -418,7 +515,7 @@ jobs:
             https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/main/api/KHR/khrplatform.h \
             -o IOSCompat/KHR/khrplatform.h
 
-          echo "===== DOWNLOAD CLASSIC GL HEADER ====="
+          echo "===== DOWNLOAD DESKTOP GL HEADER ====="
 
           curl \
             --fail \
@@ -456,59 +553,54 @@ jobs:
               if not match:
                   continue
 
-              name = match.group(1)
-              value = match.group(2)
-
-              constants[name] = value
+              constants[
+                  match.group(1)
+              ] = match.group(2)
 
           if len(constants) < 300:
               raise SystemExit(
-                  f"Too few GL constants extracted: "
-                  f"{len(constants)}"
+                  "Too few GL constants: "
+                  + str(len(constants))
               )
 
-          out = []
-
-          out.append(
-              "#ifndef BOXEDWINE_IOS_LEGACY_GL_CONSTANTS_H"
-          )
-
-          out.append(
-              "#define BOXEDWINE_IOS_LEGACY_GL_CONSTANTS_H"
-          )
-
-          out.append("")
+          output = [
+              "#ifndef BOXEDWINE_IOS_LEGACY_GL_CONSTANTS_H",
+              "#define BOXEDWINE_IOS_LEGACY_GL_CONSTANTS_H",
+              ""
+          ]
 
           for name in sorted(constants):
 
-              out.append(
-                  f"#ifndef {name}"
+              output.append(
+                  "#ifndef " + name
               )
 
-              out.append(
-                  f"#define {name} {constants[name]}"
+              output.append(
+                  "#define "
+                  + name
+                  + " "
+                  + constants[name]
               )
 
-              out.append(
+              output.append(
                   "#endif"
               )
 
-              out.append("")
+              output.append("")
 
-          out.append(
-              "#endif"
-          )
+          output.append("#endif")
 
           Path(
               "IOSCompat/LegacyGLConstants.h"
           ).write_text(
-              "\n".join(out)
+              "\n".join(output)
               + "\n"
           )
 
           print(
-              f"Generated {len(constants)} "
-              f"legacy OpenGL constants"
+              "Generated "
+              + str(len(constants))
+              + " GL constants"
           )
           PY
 
@@ -530,8 +622,16 @@ jobs:
           typedef double GLclampd;
           #endif
 
-          #include <LegacyGLConstants.h>
+          /*
+           * Extension types first.
+           */
           #include <GL/glext.h>
+
+          /*
+           * Missing classic desktop constants afterwards.
+           * Every definition inside is protected by #ifndef.
+           */
+          #include <LegacyGLConstants.h>
 
           #endif
           EOF
@@ -545,7 +645,7 @@ jobs:
             IOSCompat/LegacyGLConstants.h
 
           echo
-          echo "===== VERIFY IMPORTANT GL VALUES ====="
+          echo "===== VERIFY IMPORTANT CONSTANTS ====="
 
           for NAME in \
             GL_MAP2_INDEX \
@@ -584,7 +684,7 @@ jobs:
           done
 
       # ==========================================================
-      # TEST GL COMPATIBILITY BEFORE FULL BUILD
+      # TEST OPENGL
       # ==========================================================
 
       - name: Test legacy OpenGL compatibility
@@ -616,12 +716,16 @@ jobs:
           GLenum j = GL_COEFF;
           GLenum k = GL_ORDER;
           GLenum l = GL_DOMAIN;
+
           GLenum m = GL_FOG_COLOR;
+
           GLenum n = GL_TEXTURE_WIDTH;
           GLenum o = GL_TEXTURE_HEIGHT;
           GLenum p = GL_TEXTURE_1D;
+
           GLenum q = GL_TEXTURE_BORDER_COLOR;
           GLenum r = GL_TEXTURE_ENV_COLOR;
+
           GLenum s = GL_OBJECT_PLANE;
           GLenum t = GL_EYE_PLANE;
 
@@ -629,7 +733,7 @@ jobs:
               GLAPIENTRY *TestProc
           )();
 
-          TestProc testProc = nullptr;
+          TestProc proc = nullptr;
 
           int main() {
               (void)testDouble;
@@ -659,7 +763,8 @@ jobs:
               (void)r;
               (void)s;
               (void)t;
-              (void)testProc;
+
+              (void)proc;
 
               return 0;
           }
@@ -687,13 +792,10 @@ jobs:
             -ISDL2/include \
             /tmp/glcompat-test.cpp
 
-          echo
-          echo "======================================"
-          echo "LEGACY OPENGL TEST PASSED"
-          echo "======================================"
+          echo "===== OPENGL COMPATIBILITY TEST PASSED ====="
 
       # ==========================================================
-      # BOXEDWINE GL COMMON
+      # PATCH BOXEDWINE GLCOMMON
       # ==========================================================
 
       - name: Patch BoxedWine GL common header
@@ -713,10 +815,11 @@ jobs:
               "#ifdef BOXEDWINE_OPENGL\n"
           )
 
-          if (
+          include = (
               "#include <IOSGLCompat.h>"
-              not in text
-          ):
+          )
+
+          if include not in text:
 
               if marker not in text:
                   raise SystemExit(
@@ -744,12 +847,14 @@ jobs:
           PY
 
       # ==========================================================
-      # GLhandleARB
+      # GLHANDLEARB
       # ==========================================================
 
       - name: Verify GLhandleARB pointer support
         run: |
           set -e
+
+          echo "===== GLHANDLE SUPPORT ====="
 
           grep \
             -n \
@@ -761,11 +866,8 @@ jobs:
             "marshalIndexToHandle" \
             Boxedwine/source/opengl/glMarshal.h
 
-          echo \
-            "GLhandleARB pointer mapper OK"
-
       # ==========================================================
-      # SDL OPENGL -> IPHONE GLES
+      # PATCH SDL OPENGL
       # ==========================================================
 
       - name: Patch SDL OpenGL for iPhone
@@ -791,14 +893,16 @@ jobs:
               "#if defined(__APPLE__) && TARGET_OS_OSX"
           )
 
-          if (
-              "#include <TargetConditionals.h>"
-              not in text
-          ):
+          if "#include <TargetConditionals.h>" not in text:
 
               marker = (
                   '#include "boxedwine.h"\n'
               )
+
+              if marker not in text:
+                  raise SystemExit(
+                      "boxedwine include not found"
+                  )
 
               replacement = """#include "boxedwine.h"
 
@@ -806,11 +910,6 @@ jobs:
           #include <TargetConditionals.h>
           #endif
           """
-
-              if marker not in text:
-                  raise SystemExit(
-                      "boxedwine include not found"
-                  )
 
               text = text.replace(
                   marker,
@@ -846,10 +945,7 @@ jobs:
               );
           #endif"""
 
-          if (
-              "SDL_GL_CONTEXT_PROFILE_ES"
-              not in text
-          ):
+          if "SDL_GL_CONTEXT_PROFILE_ES" not in text:
 
               if reset not in text:
                   raise SystemExit(
@@ -869,8 +965,19 @@ jobs:
           )
           PY
 
+          echo "===== SDL GL PATCH CHECK ====="
+
+          grep \
+            -n \
+            -E \
+            "IOSGLCompat|TARGET_OS_OSX|SDL_GL_CONTEXT_PROFILE_ES" \
+            Boxedwine/source/opengl/sdl/sdlgl.cpp \
+            | head -30
+
       # ==========================================================
-      # DISABLE DEFAULT MAIN
+      # DISABLE BOXEDWINE OWN MAIN
+      #
+      # We use IOSHost/main.mm instead.
       # ==========================================================
 
       - name: Disable BoxedWine default main
@@ -886,22 +993,28 @@ jobs:
 
           text = path.read_text()
 
-          old = (
-              "#ifndef __TEST"
-          )
+          old = """#ifndef __TEST
+          int boxedmain(int argc, const char** argv);
 
-          new = (
-              "#if !defined(__TEST) && "
-              "!defined(BOXEDWINE_IOS_HOST)"
-          )
+          int main(int argc, char** argv) {
+              return boxedmain(argc, (const char**)argv);
+          }
+          #endif"""
 
-          if new not in text:
+          new = """#if !defined(__TEST) && !defined(BOXEDWINE_IOS_HOST)
+          int boxedmain(int argc, const char** argv);
 
-              if old not in text:
-                  raise SystemExit(
-                      "default main guard not found"
-                  )
+          int main(int argc, char** argv) {
+              return boxedmain(argc, (const char**)argv);
+          }
+          #endif"""
 
+          if new in text:
+              print(
+                  "default main already patched"
+              )
+
+          elif old in text:
               text = text.replace(
                   old,
                   new,
@@ -910,13 +1023,18 @@ jobs:
 
               path.write_text(text)
 
-          print(
-              "default main disabled"
-          )
+              print(
+                  "default main disabled for iOS"
+              )
+
+          else:
+              raise SystemExit(
+                  "BoxedWine main block not found"
+              )
           PY
 
       # ==========================================================
-      # ZLIB / MINIZIP
+      # ZLIB
       # ==========================================================
 
       - name: Clone zlib
@@ -936,6 +1054,10 @@ jobs:
           cp \
             zlib-src/contrib/minizip/*.h \
             Vendor/include/minizip/
+
+      # ==========================================================
+      # MINIZIP
+      # ==========================================================
 
       - name: Build minizip
         run: |
@@ -963,7 +1085,6 @@ jobs:
             zip.c \
             mztools.c
           do
-
               "$CC" \
                 -c \
                 -O3 \
@@ -975,7 +1096,6 @@ jobs:
                 "zlib-src/contrib/minizip/$SRC" \
                 -o \
                 "minizip-build/${SRC%.c}.o"
-
           done
 
           /usr/bin/libtool \
@@ -1014,14 +1134,14 @@ jobs:
               const char **argv
           );
 
-          static bool exists(
+          static bool fileExists(
               const std::string& path
           ) {
-              struct stat st {};
+              struct stat info {};
 
               return stat(
                   path.c_str(),
-                  &st
+                  &info
               ) == 0;
           }
 
@@ -1064,8 +1184,10 @@ jobs:
                   }
 
                   std::string docs(
-                      [documents
-                          fileSystemRepresentation]
+                      [
+                          documents
+                          fileSystemRepresentation
+                      ]
                   );
 
                   chdir(
@@ -1075,14 +1197,21 @@ jobs:
                   std::string wineZip =
                       docs + "/Wine.zip";
 
-                  if (!exists(wineZip)) {
+                  if (
+                      !fileExists(
+                          wineZip
+                      )
+                  ) {
 
                       std::vector<std::string>
                           candidates = {
 
+                          docs + "/Wine-3.1.zip",
+                          docs + "/Wine-4.0.zip",
                           docs + "/Wine-5.0.zip",
                           docs + "/Wine-6.0.zip",
                           docs + "/Wine-7.0.zip",
+                          docs + "/Wine-8.0.zip",
                           docs + "/Wine-9.0.zip",
                           docs + "/Wine-10.0.zip",
                           docs + "/Wine-11.0.zip"
@@ -1092,11 +1221,11 @@ jobs:
                           const auto& candidate :
                           candidates
                       ) {
-
                           if (
-                              exists(candidate)
+                              fileExists(
+                                  candidate
+                              )
                           ) {
-
                               wineZip =
                                   candidate;
 
@@ -1108,22 +1237,28 @@ jobs:
                   const std::string game =
                       docs + "/postal2";
 
-                  const std::string exe =
+                  const std::string executable =
                       game
                       + "/System/Postal2.exe";
 
-                  if (!exists(wineZip)) {
-
+                  if (
+                      !fileExists(
+                          wineZip
+                      )
+                  ) {
                       showMessage(
                           "POSTAL 2",
-                          "Нужен Wine.zip в папке приложения."
+                          "Нужен Wine.zip в Documents приложения."
                       );
 
                       return 0;
                   }
 
-                  if (!exists(exe)) {
-
+                  if (
+                      !fileExists(
+                          executable
+                      )
+                  ) {
                       showMessage(
                           "POSTAL 2",
                           "Положи папку postal2 в Documents приложения."
@@ -1198,33 +1333,34 @@ jobs:
                   };
 
                   std::vector<const char*>
-                      args;
+                      arguments;
 
                   for (
                       auto& value :
                       values
                   ) {
-
-                      args.push_back(
+                      arguments.push_back(
                           value.c_str()
                       );
                   }
 
                   return boxedmain(
-                      (int)args.size(),
-                      args.data()
+                      (int)arguments.size(),
+                      arguments.data()
                   );
               }
           }
           EOF
 
       # ==========================================================
-      # INFO.PLIST
+      # INFO PLIST
       # ==========================================================
 
       - name: Create Info plist
         run: |
           set -e
+
+          mkdir -p IOSHost
 
           cat > IOSHost/Info.plist <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -1253,10 +1389,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>1.8</string>
+              <string>2.0</string>
 
               <key>CFBundleVersion</key>
-              <string>18</string>
+              <string>20</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -1506,8 +1642,13 @@ jobs:
           test -d \
             Postal2BoxedWine.xcodeproj
 
+          echo "===== XCODE PROJECT CREATED ====="
+
       # ==========================================================
       # BUILD
+      #
+      # Do not fail immediately.
+      # Save the entire build log first.
       # ==========================================================
 
       - name: Build iPhone BoxedWine
@@ -1539,7 +1680,8 @@ jobs:
 
           STATUS=${PIPESTATUS[0]}
 
-          echo "$STATUS" \
+          echo \
+            "$STATUS" \
             > boxedwine-build-status.txt
 
           echo
@@ -1548,7 +1690,7 @@ jobs:
           echo "======================================"
 
           echo
-          echo "===== ERROR LINES ====="
+          echo "===== REAL ERRORS ====="
 
           grep \
             -Eni \
@@ -1568,7 +1710,8 @@ jobs:
           set -e
 
           STATUS="$(
-            cat boxedwine-build-status.txt
+            cat \
+              boxedwine-build-status.txt
           )"
 
           if [ "$STATUS" = "0" ]; then
@@ -1581,7 +1724,10 @@ jobs:
 
           ERROR_FILE="LAST_ERRORS_${GITHUB_RUN_NUMBER}.txt"
 
-          python3 - "$ERROR_FILE" <<'PY'
+          python3 \
+            - \
+            "$ERROR_FILE" \
+            <<'PY'
           from pathlib import Path
           import sys
 
@@ -1612,8 +1758,9 @@ jobs:
           )
 
           indexes = [
-              i
-              for i, line in enumerate(lines)
+              index
+              for index, line
+              in enumerate(lines)
               if any(
                   keyword in line.lower()
                   for keyword in keywords
@@ -1628,34 +1775,31 @@ jobs:
                   range(
                       max(
                           0,
-                          index - 15
+                          index - 18
                       ),
                       min(
                           len(lines),
-                          index + 18
+                          index + 22
                       )
                   )
               )
 
           output = [
               "POSTAL 2 iOS / BOXEDWINE",
-              f"GITHUB RUN NUMBER: {output_path.stem}",
-              "COMPLETE COMPILER ERROR REPORT",
+              "GITHUB RUN: "
+              + output_path.stem,
+              "COMPLETE ERROR REPORT",
               "=" * 72,
-              f"Detected error lines: {len(indexes)}",
+              "Detected error lines: "
+              + str(len(indexes)),
               ""
           ]
 
           previous = -100
 
-          for index in sorted(
-              selected
-          ):
+          for index in sorted(selected):
 
-              if (
-                  index >
-                  previous + 1
-              ):
+              if index > previous + 1:
 
                   output += [
                       "",
@@ -1664,8 +1808,9 @@ jobs:
                   ]
 
               output.append(
-                  f"{index + 1}: "
-                  f"{lines[index]}"
+                  str(index + 1)
+                  + ": "
+                  + lines[index]
               )
 
               previous = index
@@ -1673,12 +1818,12 @@ jobs:
           output += [
               "",
               "=" * 72,
-              "LAST 500 RAW BUILD LINES",
+              "LAST 700 RAW BUILD LINES",
               "=" * 72,
               ""
           ]
 
-          tail = lines[-500:]
+          tail = lines[-700:]
 
           first_line = (
               len(lines)
@@ -1686,13 +1831,15 @@ jobs:
               + 1
           )
 
-          for offset, line in enumerate(
-              tail
-          ):
+          for offset, line in enumerate(tail):
 
               output.append(
-                  f"{first_line + offset}: "
-                  f"{line}"
+                  str(
+                      first_line
+                      + offset
+                  )
+                  + ": "
+                  + line
               )
 
           result = (
@@ -1712,6 +1859,14 @@ jobs:
 
           print(result)
           PY
+
+          echo
+          echo "===== ERROR LOG FILES ====="
+
+          ls \
+            -lh \
+            "$ERROR_FILE" \
+            LAST_ERRORS_LATEST.txt
 
           git config \
             user.name \
@@ -1749,7 +1904,8 @@ jobs:
         shell: bash
         run: |
           STATUS="$(
-            cat boxedwine-build-status.txt
+            cat \
+              boxedwine-build-status.txt
           )"
 
           if [ "$STATUS" != "0" ]; then
@@ -1757,11 +1913,10 @@ jobs:
               echo
               echo "======================================"
               echo "BOXEDWINE BUILD FAILED"
-              echo "LATEST ERROR LOG SAVED"
+              echo "LAST_ERRORS_LATEST.txt SAVED"
               echo "======================================"
 
               exit "$STATUS"
-
           fi
 
           echo
@@ -1799,10 +1954,12 @@ jobs:
 
           echo "$APP"
 
-          du -sh "$APP"
+          du \
+            -sh \
+            "$APP"
 
       # ==========================================================
-      # IPA
+      # CREATE IPA
       # ==========================================================
 
       - name: Create IPA
@@ -1829,7 +1986,8 @@ jobs:
 
           echo "===== IPA ====="
 
-          ls -lh \
+          ls \
+            -lh \
             POSTAL2-BoxedWine-iOS.ipa
 
       # ==========================================================
@@ -1838,14 +1996,15 @@ jobs:
 
       - name: Publish IPA to Releases
         env:
-
-          GH_TOKEN:
-            ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
 
         run: |
           set -e
 
           TAG="postal2-ios-${GITHUB_RUN_NUMBER}"
+
+          echo "===== RELEASE ====="
+          echo "$TAG"
 
           gh release create \
             "$TAG" \
@@ -1854,7 +2013,7 @@ jobs:
             --title \
             "POSTAL 2 iOS Build ${GITHUB_RUN_NUMBER}" \
             --notes \
-            "Unsigned POSTAL 2 BoxedWine iOS runtime."
+            "Unsigned BoxedWine iOS runtime. Game files are not included."
 
           {
               echo
@@ -1862,6 +2021,5 @@ jobs:
               echo
               echo "Открой Releases."
               echo
-              echo \
-                "Скачай POSTAL2-BoxedWine-iOS.ipa"
+              echo "Скачай POSTAL2-BoxedWine-iOS.ipa"
           } >> "$GITHUB_STEP_SUMMARY"
