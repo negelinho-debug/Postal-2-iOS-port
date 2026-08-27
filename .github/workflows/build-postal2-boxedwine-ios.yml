@@ -61,8 +61,78 @@ jobs:
           test -f Boxedwine/source/util/bhashtable.h
           test -f Boxedwine/source/opengl/glcommon.h
           test -f Boxedwine/source/opengl/glMarshal.h
+          test -f Boxedwine/source/opengl/es/esopengl.c
           test -f Boxedwine/source/opengl/sdl/sdlgl.cpp
           test -f Boxedwine/platform/sdl/knativesystem.cpp
+
+      # ==========================================================
+      # NEW RUN #20 FIX
+      #
+      # Current BoxedWine master still has:
+      #
+      #   #include "kalloc.h"
+      #
+      # inside esopengl.c, although that header no longer exists
+      # in the current source tree and esopengl.c doesn't use it.
+      # ==========================================================
+
+      - name: Remove obsolete kalloc include
+        run: |
+          set -e
+
+          FILE="Boxedwine/source/opengl/es/esopengl.c"
+
+          echo "===== BEFORE ====="
+
+          grep \
+            -n \
+            'kalloc.h' \
+            "$FILE" \
+            || true
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path(
+              "Boxedwine/source/opengl/es/esopengl.c"
+          )
+
+          text = path.read_text()
+
+          old = '#include "kalloc.h"\n'
+
+          if old in text:
+              text = text.replace(
+                  old,
+                  "",
+                  1
+              )
+
+              path.write_text(text)
+
+              print(
+                  "Removed obsolete kalloc.h include"
+              )
+
+          else:
+              print(
+                  "kalloc.h include already absent"
+              )
+          PY
+
+          echo
+          echo "===== AFTER ====="
+
+          if grep \
+            -q \
+            'kalloc.h' \
+            "$FILE"
+          then
+              echo "ERROR: kalloc.h still present"
+              exit 1
+          fi
+
+          echo "KALLOC FIX PASSED"
 
       # ==========================================================
       # BHASHTABLE
@@ -105,7 +175,9 @@ jobs:
 
               path.write_text(text)
 
-          print("BHashTable patch OK")
+          print(
+              "BHashTable patch OK"
+          )
           PY
 
       # ==========================================================
@@ -240,7 +312,9 @@ jobs:
 
               path.write_text(text)
 
-          print("SIMDe patch OK")
+          print(
+              "SIMDe patch OK"
+          )
           PY
 
       # ==========================================================
@@ -282,7 +356,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             SYMROOT="$PWD/sdlbuild" \
             build \
-            2>&1 | tee sdl-build.log
+            2>&1 \
+            | tee sdl-build.log
 
           SDL_LIB="$(
             find sdlbuild \
@@ -309,10 +384,10 @@ jobs:
             "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
 
       # ==========================================================
-      # OPENGL HEADERS
+      # COMPLETE OPENGL COMPATIBILITY
       #
-      # Instead of fixing old GL constants one by one,
-      # generate ALL numeric legacy GL constants automatically.
+      # Generate classic desktop GL constants automatically,
+      # rather than adding GL_* names one by one.
       # ==========================================================
 
       - name: Create complete OpenGL compatibility layer
@@ -355,14 +430,6 @@ jobs:
           test -s IOSCompat/GL/glext.h
           test -s IOSCompat/KHR/khrplatform.h
           test -s IOSCompat/DesktopGL.h
-
-          # ------------------------------------------------------
-          # Extract ONLY numeric GL_* constants.
-          #
-          # We deliberately do not include the desktop header
-          # directly, because its desktop types/functions would
-          # conflict with Apple's OpenGL ES headers.
-          # ------------------------------------------------------
 
           python3 - <<'PY'
           from pathlib import Path
@@ -445,29 +512,16 @@ jobs:
           )
           PY
 
-          # ------------------------------------------------------
-          # Final iPhone GL compatibility header
-          # ------------------------------------------------------
-
           cat > IOSCompat/IOSGLCompat.h <<'EOF'
           #ifndef BOXEDWINE_IOS_GL_COMPAT_H
           #define BOXEDWINE_IOS_GL_COMPAT_H
 
-          /*
-           * Real graphics API on iPhone.
-           */
           #include <SDL_opengles2.h>
 
-          /*
-           * BoxedWine desktop calling convention.
-           */
           #ifndef GLAPIENTRY
           #define GLAPIENTRY APIENTRY
           #endif
 
-          /*
-           * Desktop double types missing from GLES2.
-           */
           #ifndef GLdouble
           typedef double GLdouble;
           #endif
@@ -476,21 +530,14 @@ jobs:
           typedef double GLclampd;
           #endif
 
-          /*
-           * ALL classic desktop numeric GL constants.
-           */
           #include <LegacyGLConstants.h>
-
-          /*
-           * Modern ARB / EXT types and enums.
-           */
           #include <GL/glext.h>
 
           #endif
           EOF
 
           echo
-          echo "===== LEGACY CONSTANT COUNT ====="
+          echo "===== LEGACY GL CONSTANT COUNT ====="
 
           grep \
             -c \
@@ -498,7 +545,7 @@ jobs:
             IOSCompat/LegacyGLConstants.h
 
           echo
-          echo "===== VERIFY CURRENT BUILD #19 ERRORS ====="
+          echo "===== VERIFY IMPORTANT GL VALUES ====="
 
           for NAME in \
             GL_MAP2_INDEX \
@@ -528,20 +575,16 @@ jobs:
                   "#define $NAME " \
                   IOSCompat/LegacyGLConstants.h
               then
-
-                  echo \
-                    "ERROR: missing $NAME"
-
+                  echo "ERROR: missing $NAME"
                   exit 1
               fi
 
-              echo \
-                "OK: $NAME"
+              echo "OK: $NAME"
 
           done
 
       # ==========================================================
-      # TEST THE ENTIRE CURRENT ERROR CATEGORY
+      # TEST GL COMPATIBILITY BEFORE FULL BUILD
       # ==========================================================
 
       - name: Test legacy OpenGL compatibility
@@ -573,16 +616,12 @@ jobs:
           GLenum j = GL_COEFF;
           GLenum k = GL_ORDER;
           GLenum l = GL_DOMAIN;
-
           GLenum m = GL_FOG_COLOR;
-
           GLenum n = GL_TEXTURE_WIDTH;
           GLenum o = GL_TEXTURE_HEIGHT;
           GLenum p = GL_TEXTURE_1D;
-
           GLenum q = GL_TEXTURE_BORDER_COLOR;
           GLenum r = GL_TEXTURE_ENV_COLOR;
-
           GLenum s = GL_OBJECT_PLANE;
           GLenum t = GL_EYE_PLANE;
 
@@ -593,13 +632,10 @@ jobs:
           TestProc testProc = nullptr;
 
           int main() {
-
               (void)testDouble;
               (void)testClamp;
-
               (void)testHandle;
               (void)testChar;
-
               (void)testPointer;
               (void)testSize;
 
@@ -623,7 +659,6 @@ jobs:
               (void)r;
               (void)s;
               (void)t;
-
               (void)testProc;
 
               return 0;
@@ -655,7 +690,6 @@ jobs:
           echo
           echo "======================================"
           echo "LEGACY OPENGL TEST PASSED"
-          echo "BUILD #19 CONSTANTS ALL AVAILABLE"
           echo "======================================"
 
       # ==========================================================
@@ -710,7 +744,7 @@ jobs:
           PY
 
       # ==========================================================
-      # GLhandleARB POINTER MODE
+      # GLhandleARB
       # ==========================================================
 
       - name: Verify GLhandleARB pointer support
@@ -836,7 +870,7 @@ jobs:
           PY
 
       # ==========================================================
-      # DEFAULT MAIN
+      # DISABLE DEFAULT MAIN
       # ==========================================================
 
       - name: Disable BoxedWine default main
@@ -1219,10 +1253,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>1.7</string>
+              <string>1.8</string>
 
               <key>CFBundleVersion</key>
-              <string>17</string>
+              <string>18</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -1409,37 +1443,25 @@ jobs:
                   OTHER_CFLAGS:
 
                     - "$(inherited)"
-
                     - "-Wno-error"
 
                   OTHER_CPLUSPLUSFLAGS:
 
                     - "$(inherited)"
-
                     - "-std=gnu++20"
-
                     - "-Wno-error"
-
                     - "-Wno-deprecated-declarations"
-
                     - "-Wno-unused-variable"
-
                     - "-Wno-unused-function"
-
                     - "-Wno-unused-private-field"
-
                     - "-Wno-c++11-narrowing"
 
                   OTHER_LDFLAGS:
 
                     - "$(inherited)"
-
                     - "-lSDL2"
-
                     - "-lminizip"
-
                     - "-lz"
-
                     - "-lc++"
 
               dependencies:
@@ -1571,6 +1593,11 @@ jobs:
               "boxedwine-ios-build.log"
           )
 
+          if not log.exists():
+              raise SystemExit(
+                  "boxedwine-ios-build.log not found"
+              )
+
           lines = log.read_text(
               errors="replace"
           ).splitlines()
@@ -1601,11 +1628,11 @@ jobs:
                   range(
                       max(
                           0,
-                          index - 12
+                          index - 15
                       ),
                       min(
                           len(lines),
-                          index + 14
+                          index + 18
                       )
                   )
               )
@@ -1646,12 +1673,12 @@ jobs:
           output += [
               "",
               "=" * 72,
-              "LAST 400 RAW BUILD LINES",
+              "LAST 500 RAW BUILD LINES",
               "=" * 72,
               ""
           ]
 
-          tail = lines[-400:]
+          tail = lines[-500:]
 
           first_line = (
               len(lines)
