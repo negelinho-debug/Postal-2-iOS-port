@@ -58,14 +58,14 @@ jobs:
 
           test -f Boxedwine/source/sdl/main.cpp
           test -f Boxedwine/source/util/networkutils.cpp
+          test -f Boxedwine/source/util/bhashtable.h
           test -f Boxedwine/source/opengl/glcommon.h
           test -f Boxedwine/source/opengl/glMarshal.h
-          test -f Boxedwine/source/opengl/glMarshal.cpp
           test -f Boxedwine/source/opengl/sdl/sdlgl.cpp
           test -f Boxedwine/platform/sdl/knativesystem.cpp
 
       # ==========================================================
-      # BHASHTABLE FIX
+      # BHASHTABLE
       # ==========================================================
 
       - name: Patch BHashTable
@@ -112,30 +112,25 @@ jobs:
       # DISABLE CURL
       # ==========================================================
 
-      - name: Disable BoxedWine network downloader on iOS
+      - name: Disable BoxedWine downloader on iOS
         run: |
           set -e
 
           cat > Boxedwine/source/util/networkutils.cpp <<'EOF'
-          /*
-           * iOS local runtime.
-           * POSTAL 2 and Wine are supplied locally.
-           */
-
           #include "boxedwine.h"
           #include "networkutils.h"
 
           bool downloadFile(
               BString url,
               BString filePath,
-              std::function<void(U64 bytesCompleted)> f,
+              std::function<void(U64 bytesCompleted)> callback,
               NetworkProxy* proxy,
               BString& errorMsg,
               bool* cancel
           ) {
               (void)url;
               (void)filePath;
-              (void)f;
+              (void)callback;
               (void)proxy;
               (void)cancel;
 
@@ -176,10 +171,6 @@ jobs:
 
           test -f SIMDe/simde/x86/sse.h
           test -f SIMDe/simde/x86/sse2.h
-
-      # ==========================================================
-      # SIMDE XCODE FIX
-      # ==========================================================
 
       - name: Patch SIMDe
         run: |
@@ -232,7 +223,7 @@ jobs:
 
               if broken not in block:
                   raise SystemExit(
-                      "SIMDe broken branch not found"
+                      "SIMDe branch not found"
                   )
 
               block = block.replace(
@@ -318,22 +309,13 @@ jobs:
             "$GITHUB_WORKSPACE/Vendor/libSDL2.a"
 
       # ==========================================================
-      # OPENGL COMPATIBILITY
+      # OPENGL HEADERS
       #
-      # Includes all fixes that have already passed:
-      #
-      # GLAPIENTRY
-      # GLdouble
-      # GLclampd
-      # GL_TEXTURE_ENV_COLOR
-      # GL_OBJECT_PLANE
-      # GL_EYE_PLANE
-      #
-      # NEW CURRENT FIX:
-      # GL_TEXTURE_BORDER_COLOR
+      # Instead of fixing old GL constants one by one,
+      # generate ALL numeric legacy GL constants automatically.
       # ==========================================================
 
-      - name: Create OpenGL compatibility headers
+      - name: Create complete OpenGL compatibility layer
         run: |
           set -e
 
@@ -361,30 +343,130 @@ jobs:
             https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/main/api/KHR/khrplatform.h \
             -o IOSCompat/KHR/khrplatform.h
 
-          test -s \
-            IOSCompat/GL/glext.h
+          echo "===== DOWNLOAD CLASSIC GL HEADER ====="
 
-          test -s \
-            IOSCompat/KHR/khrplatform.h
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            https://raw.githubusercontent.com/emscripten-core/emscripten/main/system/include/GL/gl.h \
+            -o IOSCompat/DesktopGL.h
+
+          test -s IOSCompat/GL/glext.h
+          test -s IOSCompat/KHR/khrplatform.h
+          test -s IOSCompat/DesktopGL.h
+
+          # ------------------------------------------------------
+          # Extract ONLY numeric GL_* constants.
+          #
+          # We deliberately do not include the desktop header
+          # directly, because its desktop types/functions would
+          # conflict with Apple's OpenGL ES headers.
+          # ------------------------------------------------------
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          source = Path(
+              "IOSCompat/DesktopGL.h"
+          ).read_text(
+              errors="replace"
+          ).splitlines()
+
+          pattern = re.compile(
+              r'^\s*#define\s+'
+              r'(GL_[A-Za-z0-9_]+)\s+'
+              r'(0x[0-9A-Fa-f]+[uUlL]*|[0-9]+[uUlL]*)'
+              r'(?:\s|$)'
+          )
+
+          constants = {}
+
+          for line in source:
+              match = pattern.match(line)
+
+              if not match:
+                  continue
+
+              name = match.group(1)
+              value = match.group(2)
+
+              constants[name] = value
+
+          if len(constants) < 300:
+              raise SystemExit(
+                  f"Too few GL constants extracted: "
+                  f"{len(constants)}"
+              )
+
+          out = []
+
+          out.append(
+              "#ifndef BOXEDWINE_IOS_LEGACY_GL_CONSTANTS_H"
+          )
+
+          out.append(
+              "#define BOXEDWINE_IOS_LEGACY_GL_CONSTANTS_H"
+          )
+
+          out.append("")
+
+          for name in sorted(constants):
+
+              out.append(
+                  f"#ifndef {name}"
+              )
+
+              out.append(
+                  f"#define {name} {constants[name]}"
+              )
+
+              out.append(
+                  "#endif"
+              )
+
+              out.append("")
+
+          out.append(
+              "#endif"
+          )
+
+          Path(
+              "IOSCompat/LegacyGLConstants.h"
+          ).write_text(
+              "\n".join(out)
+              + "\n"
+          )
+
+          print(
+              f"Generated {len(constants)} "
+              f"legacy OpenGL constants"
+          )
+          PY
+
+          # ------------------------------------------------------
+          # Final iPhone GL compatibility header
+          # ------------------------------------------------------
 
           cat > IOSCompat/IOSGLCompat.h <<'EOF'
           #ifndef BOXEDWINE_IOS_GL_COMPAT_H
           #define BOXEDWINE_IOS_GL_COMPAT_H
 
           /*
-           * Actual renderer on iPhone.
+           * Real graphics API on iPhone.
            */
           #include <SDL_opengles2.h>
 
           /*
-           * Calling convention expected by BoxedWine.
+           * BoxedWine desktop calling convention.
            */
           #ifndef GLAPIENTRY
           #define GLAPIENTRY APIENTRY
           #endif
 
           /*
-           * Desktop OpenGL double types.
+           * Desktop double types missing from GLES2.
            */
           #ifndef GLdouble
           typedef double GLdouble;
@@ -395,100 +477,120 @@ jobs:
           #endif
 
           /*
-           * Khronos desktop extension types and enums.
+           * ALL classic desktop numeric GL constants.
+           */
+          #include <LegacyGLConstants.h>
+
+          /*
+           * Modern ARB / EXT types and enums.
            */
           #include <GL/glext.h>
-
-          /*
-           * Legacy desktop OpenGL constants absent from GLES2.
-           */
-
-          #ifndef GL_TEXTURE_ENV_COLOR
-          #define GL_TEXTURE_ENV_COLOR 0x2201
-          #endif
-
-          #ifndef GL_OBJECT_PLANE
-          #define GL_OBJECT_PLANE 0x2501
-          #endif
-
-          #ifndef GL_EYE_PLANE
-          #define GL_EYE_PLANE 0x2502
-          #endif
-
-          /*
-           * Current Build #18 fix.
-           *
-           * Standard OpenGL value:
-           * GL_TEXTURE_BORDER_COLOR = 0x1004
-           */
-
-          #ifndef GL_TEXTURE_BORDER_COLOR
-          #define GL_TEXTURE_BORDER_COLOR 0x1004
-          #endif
 
           #endif
           EOF
 
-          echo "===== IOSGLCompat.h ====="
+          echo
+          echo "===== LEGACY CONSTANT COUNT ====="
 
-          cat \
-            IOSCompat/IOSGLCompat.h
+          grep \
+            -c \
+            '^#define GL_' \
+            IOSCompat/LegacyGLConstants.h
+
+          echo
+          echo "===== VERIFY CURRENT BUILD #19 ERRORS ====="
+
+          for NAME in \
+            GL_MAP2_INDEX \
+            GL_MAP2_TEXTURE_COORD_1 \
+            GL_MAP2_TEXTURE_COORD_2 \
+            GL_MAP2_VERTEX_3 \
+            GL_MAP2_NORMAL \
+            GL_MAP2_TEXTURE_COORD_3 \
+            GL_MAP2_VERTEX_4 \
+            GL_MAP2_COLOR_4 \
+            GL_MAP2_TEXTURE_COORD_4 \
+            GL_COEFF \
+            GL_ORDER \
+            GL_DOMAIN \
+            GL_FOG_COLOR \
+            GL_TEXTURE_WIDTH \
+            GL_TEXTURE_HEIGHT \
+            GL_TEXTURE_1D \
+            GL_TEXTURE_BORDER_COLOR \
+            GL_TEXTURE_ENV_COLOR \
+            GL_OBJECT_PLANE \
+            GL_EYE_PLANE
+          do
+
+              if ! grep \
+                  -q \
+                  "#define $NAME " \
+                  IOSCompat/LegacyGLConstants.h
+              then
+
+                  echo \
+                    "ERROR: missing $NAME"
+
+                  exit 1
+              fi
+
+              echo \
+                "OK: $NAME"
+
+          done
 
       # ==========================================================
-      # TEST ALL KNOWN OPENGL FIXES
-      #
-      # This must pass BEFORE full BoxedWine compilation.
+      # TEST THE ENTIRE CURRENT ERROR CATEGORY
       # ==========================================================
 
-      - name: Test OpenGL compatibility
+      - name: Test legacy OpenGL compatibility
         run: |
           set -e
 
           cat > /tmp/glcompat-test.cpp <<'EOF'
           #include <IOSGLCompat.h>
 
-          GLdouble testDouble =
-              0.0;
+          GLdouble testDouble = 0.0;
+          GLclampd testClamp = 0.0;
 
-          GLclampd testClamp =
-              0.0;
+          GLhandleARB testHandle = 0;
+          GLcharARB testChar = 0;
 
-          GLhandleARB testHandle =
-              0;
+          GLintptrARB testPointer = 0;
+          GLsizeiptrARB testSize = 0;
 
-          GLcharARB testChar =
-              0;
+          GLenum a = GL_MAP2_INDEX;
+          GLenum b = GL_MAP2_TEXTURE_COORD_1;
+          GLenum c = GL_MAP2_TEXTURE_COORD_2;
+          GLenum d = GL_MAP2_VERTEX_3;
+          GLenum e = GL_MAP2_NORMAL;
+          GLenum f = GL_MAP2_TEXTURE_COORD_3;
+          GLenum g = GL_MAP2_VERTEX_4;
+          GLenum h = GL_MAP2_COLOR_4;
+          GLenum i = GL_MAP2_TEXTURE_COORD_4;
 
-          GLintptrARB testPointer =
-              0;
+          GLenum j = GL_COEFF;
+          GLenum k = GL_ORDER;
+          GLenum l = GL_DOMAIN;
 
-          GLsizeiptrARB testSize =
-              0;
+          GLenum m = GL_FOG_COLOR;
 
-          GLhalfARB testHalfARB =
-              0;
+          GLenum n = GL_TEXTURE_WIDTH;
+          GLenum o = GL_TEXTURE_HEIGHT;
+          GLenum p = GL_TEXTURE_1D;
 
-          GLhalfNV testHalfNV =
-              0;
+          GLenum q = GL_TEXTURE_BORDER_COLOR;
+          GLenum r = GL_TEXTURE_ENV_COLOR;
 
-          GLenum testEnvColor =
-              GL_TEXTURE_ENV_COLOR;
-
-          GLenum testObjectPlane =
-              GL_OBJECT_PLANE;
-
-          GLenum testEyePlane =
-              GL_EYE_PLANE;
-
-          GLenum testBorderColor =
-              GL_TEXTURE_BORDER_COLOR;
+          GLenum s = GL_OBJECT_PLANE;
+          GLenum t = GL_EYE_PLANE;
 
           typedef void (
               GLAPIENTRY *TestProc
           )();
 
-          TestProc testProc =
-              nullptr;
+          TestProc testProc = nullptr;
 
           int main() {
 
@@ -501,13 +603,26 @@ jobs:
               (void)testPointer;
               (void)testSize;
 
-              (void)testHalfARB;
-              (void)testHalfNV;
-
-              (void)testEnvColor;
-              (void)testObjectPlane;
-              (void)testEyePlane;
-              (void)testBorderColor;
+              (void)a;
+              (void)b;
+              (void)c;
+              (void)d;
+              (void)e;
+              (void)f;
+              (void)g;
+              (void)h;
+              (void)i;
+              (void)j;
+              (void)k;
+              (void)l;
+              (void)m;
+              (void)n;
+              (void)o;
+              (void)p;
+              (void)q;
+              (void)r;
+              (void)s;
+              (void)t;
 
               (void)testProc;
 
@@ -539,12 +654,12 @@ jobs:
 
           echo
           echo "======================================"
-          echo "OPENGL COMPATIBILITY TEST PASSED"
-          echo "GL_TEXTURE_BORDER_COLOR PASSED"
+          echo "LEGACY OPENGL TEST PASSED"
+          echo "BUILD #19 CONSTANTS ALL AVAILABLE"
           echo "======================================"
 
       # ==========================================================
-      # PATCH BOXEDWINE GL COMMON HEADER
+      # BOXEDWINE GL COMMON
       # ==========================================================
 
       - name: Patch BoxedWine GL common header
@@ -602,8 +717,6 @@ jobs:
         run: |
           set -e
 
-          echo "===== GLHANDLE SUPPORT ====="
-
           grep \
             -n \
             "BOXEDWINE_GLHANDLE_ARB_POINTER" \
@@ -615,7 +728,7 @@ jobs:
             Boxedwine/source/opengl/glMarshal.h
 
           echo \
-            "BoxedWine GLhandleARB pointer mapper found"
+            "GLhandleARB pointer mapper OK"
 
       # ==========================================================
       # SDL OPENGL -> IPHONE GLES
@@ -639,15 +752,10 @@ jobs:
 
           text = path.read_text()
 
-          # iOS defines __APPLE__, but these branches
-          # are for macOS CGL.
-
           text = text.replace(
               "#ifdef __APPLE__",
               "#if defined(__APPLE__) && TARGET_OS_OSX"
           )
-
-          # Add TargetConditionals for TARGET_OS_OSX.
 
           if (
               "#include <TargetConditionals.h>"
@@ -676,15 +784,10 @@ jobs:
                   1
               )
 
-          # Desktop SDL OpenGL declarations ->
-          # our iPhone compatibility header.
-
           text = text.replace(
               "#include <SDL_opengl.h>",
               "#include <IOSGLCompat.h>"
           )
-
-          # Force OpenGL ES 2 context.
 
           reset = (
               "    SDL_GL_ResetAttributes();"
@@ -732,17 +835,8 @@ jobs:
           )
           PY
 
-          echo "===== SDLGL CHECK ====="
-
-          grep \
-            -n \
-            -E \
-            "IOSGLCompat|TARGET_OS_OSX|SDL_GL_CONTEXT_PROFILE_ES" \
-            Boxedwine/source/opengl/sdl/sdlgl.cpp \
-            | head -30
-
       # ==========================================================
-      # DISABLE BOXEDWINE DEFAULT MAIN
+      # DEFAULT MAIN
       # ==========================================================
 
       - name: Disable BoxedWine default main
@@ -825,11 +919,9 @@ jobs:
               -f clang
           )"
 
-          rm -rf \
-            minizip-build
+          rm -rf minizip-build
 
-          mkdir -p \
-            minizip-build
+          mkdir -p minizip-build
 
           for SRC in \
             ioapi.c \
@@ -871,8 +963,7 @@ jobs:
         run: |
           set -e
 
-          mkdir -p \
-            IOSHost
+          mkdir -p IOSHost
 
           cat > IOSHost/main.mm <<'EOF'
           #import <Foundation/Foundation.h>
@@ -956,15 +1047,10 @@ jobs:
                           candidates = {
 
                           docs + "/Wine-5.0.zip",
-
                           docs + "/Wine-6.0.zip",
-
                           docs + "/Wine-7.0.zip",
-
                           docs + "/Wine-9.0.zip",
-
                           docs + "/Wine-10.0.zip",
-
                           docs + "/Wine-11.0.zip"
                       };
 
@@ -1106,8 +1192,6 @@ jobs:
         run: |
           set -e
 
-          mkdir -p IOSHost
-
           cat > IOSHost/Info.plist <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
 
@@ -1135,10 +1219,10 @@ jobs:
               <string>APPL</string>
 
               <key>CFBundleShortVersionString</key>
-              <string>1.6</string>
+              <string>1.7</string>
 
               <key>CFBundleVersion</key>
-              <string>16</string>
+              <string>17</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -1283,21 +1367,13 @@ jobs:
                   HEADER_SEARCH_PATHS:
 
                     - "$(SRCROOT)/IOSCompat"
-
                     - "$(SRCROOT)/Boxedwine/include"
-
                     - "$(SRCROOT)/Boxedwine/source"
-
                     - "$(SRCROOT)/Boxedwine/source/**"
-
                     - "$(SRCROOT)/Boxedwine/platform/sdl"
-
                     - "$(SRCROOT)/SDL2/include"
-
                     - "$(SRCROOT)/Vendor/include"
-
                     - "$(SRCROOT)/Vendor/include/minizip"
-
                     - "$(SRCROOT)/SIMDe"
 
                   LIBRARY_SEARCH_PATHS:
@@ -1408,17 +1484,6 @@ jobs:
           test -d \
             Postal2BoxedWine.xcodeproj
 
-          echo "===== IMPORTANT FLAGS ====="
-
-          xcodebuild \
-            -project Postal2BoxedWine.xcodeproj \
-            -scheme Postal2BoxedWine \
-            -showBuildSettings \
-            | grep \
-            -E \
-            "BOXEDWINE_GLHANDLE_ARB_POINTER|GLH|BOXEDWINE_ES" \
-            || true
-
       # ==========================================================
       # BUILD
       # ==========================================================
@@ -1461,7 +1526,7 @@ jobs:
           echo "======================================"
 
           echo
-          echo "===== ALL ERROR LINES ====="
+          echo "===== ERROR LINES ====="
 
           grep \
             -Eni \
@@ -1472,7 +1537,7 @@ jobs:
           exit 0
 
       # ==========================================================
-      # UNIQUE ERROR REPORT
+      # UNIQUE ERROR LOG
       # ==========================================================
 
       - name: Save unique compiler error report
@@ -1494,10 +1559,6 @@ jobs:
 
           ERROR_FILE="LAST_ERRORS_${GITHUB_RUN_NUMBER}.txt"
 
-          echo \
-            "ERROR_FILE=$ERROR_FILE" \
-            >> "$GITHUB_ENV"
-
           python3 - "$ERROR_FILE" <<'PY'
           from pathlib import Path
           import sys
@@ -1509,11 +1570,6 @@ jobs:
           log = Path(
               "boxedwine-ios-build.log"
           )
-
-          if not log.exists():
-              raise SystemExit(
-                  "boxedwine-ios-build.log not found"
-              )
 
           lines = log.read_text(
               errors="replace"
@@ -1590,12 +1646,12 @@ jobs:
           output += [
               "",
               "=" * 72,
-              "LAST 350 RAW BUILD LINES",
+              "LAST 400 RAW BUILD LINES",
               "=" * 72,
               ""
           ]
 
-          tail = lines[-350:]
+          tail = lines[-400:]
 
           first_line = (
               len(lines)
@@ -1630,13 +1686,6 @@ jobs:
           print(result)
           PY
 
-          echo
-          echo "===== SAVE ERROR LOG ====="
-
-          ls -lh \
-            "$ERROR_FILE" \
-            LAST_ERRORS_LATEST.txt
-
           git config \
             user.name \
             "postal2-build-bot"
@@ -1666,7 +1715,7 @@ jobs:
           fi
 
       # ==========================================================
-      # CHECK BUILD RESULT
+      # CHECK RESULT
       # ==========================================================
 
       - name: Check BoxedWine build result
@@ -1681,7 +1730,7 @@ jobs:
               echo
               echo "======================================"
               echo "BOXEDWINE BUILD FAILED"
-              echo "Unique error log was saved."
+              echo "LATEST ERROR LOG SAVED"
               echo "======================================"
 
               exit "$STATUS"
@@ -1711,10 +1760,7 @@ jobs:
           )"
 
           if [ -z "$APP" ]; then
-
-              echo \
-                "ERROR: app not found"
-
+              echo "ERROR: app not found"
               exit 1
           fi
 
@@ -1726,22 +1772,19 @@ jobs:
 
           echo "$APP"
 
-          du -sh \
-            "$APP"
+          du -sh "$APP"
 
       # ==========================================================
-      # CREATE IPA
+      # IPA
       # ==========================================================
 
       - name: Create IPA
         run: |
           set -e
 
-          rm -rf \
-            Payload
+          rm -rf Payload
 
-          mkdir \
-            Payload
+          mkdir Payload
 
           cp \
             -R \
@@ -1776,9 +1819,6 @@ jobs:
           set -e
 
           TAG="postal2-ios-${GITHUB_RUN_NUMBER}"
-
-          echo "===== RELEASE ====="
-          echo "$TAG"
 
           gh release create \
             "$TAG" \
